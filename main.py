@@ -126,7 +126,7 @@ def run_paper_loop(cfg: dict, loop_num: int) -> dict:
                 df = get_candlestick(active_pair, count=60)
                 signal = get_signal(df, cfg) if not df.empty else "hold"
 
-                action = engine.on_signal(signal, active_pair, current_price)
+                action = engine.on_signal(signal, active_pair, ticker)
                 if action:
                     last_action = f"[{datetime.now().strftime('%H:%M:%S')}] {active_pair} {action}"
                     state["last_action"] = last_action
@@ -151,9 +151,9 @@ def run_paper_loop(cfg: dict, loop_num: int) -> dict:
         if engine.position:
             try:
                 t = get_ticker(active_pair)
-                engine.force_close(t["last"])
+                engine.force_close(t)
             except Exception:
-                engine.force_close(engine.position["entry_price"])
+                engine.force_close({"last": engine.position["entry_price"]})
 
     return {"balance": engine.balance, "max_drawdown": engine.max_drawdown}
 

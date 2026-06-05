@@ -7,7 +7,7 @@
 - 上記を3ループ連続達成、または最大5ループで終了
 
 ## スタック
-Python 3.11, requests, pandas, pandas-ta, rich, pyyaml, sqlite3, matplotlib
+Python 3.14, requests, pandas, ta, rich, pyyaml, sqlite3, matplotlib, flask
 
 ## プロジェクト構造
 main.py           # エントリーポイント

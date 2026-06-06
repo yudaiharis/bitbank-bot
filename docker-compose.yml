@@ -38,6 +38,20 @@ services:
     mem_limit: 512m
     memswap_limit: 768m
 
+  # ── Cloudflare Tunnel（HTTPS公開）────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - web
+    mem_limit: 64m
+    memswap_limit: 128m
+    profiles:
+      - cloudflare
+
   # ── バックテスト（手動実行: docker compose run --rm backtest）
   backtest:
     build: .

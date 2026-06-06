@@ -75,12 +75,24 @@ bash /opt/bitbank-bot/deploy/setup_gcp_docker.sh
 
 ## Step 3: Cloudflare Tunnel（HTTPS公開）
 
+### 3-1. Cloudflare コンソールでトンネルを作成
+
+1. https://one.dash.cloudflare.com/ → **Zero Trust** → **Networks** → **Tunnels**
+2. **「Create a tunnel」** → Connector: **Docker** を選択
+3. トークン（`eyJ...` で始まる文字列）をコピーしておく
+4. **Public Hostname** を設定：
+   - Subdomain: `bitbank`（任意）
+   - Domain: 自分のドメイン
+   - Service: `http://web:5000` ← **ここが重要（Docker内部ネットワーク経由）**
+
+### 3-2. VM 上でセットアップスクリプトを実行
+
 ```bash
 bash /opt/bitbank-bot/deploy/setup_cloudflare.sh
 ```
 
-→ トークンを貼り付けるとHTTPS URLが発行されます。
-→ スマホ・どこからでもダッシュボードにアクセス可能になります。
+→ トークンを貼り付けると `cloudflared` コンテナが起動し HTTPS URL が発行されます。
+→ GCP のファイアウォール開放は不要です（Cloudflare が終端処理）。
 
 ---
 

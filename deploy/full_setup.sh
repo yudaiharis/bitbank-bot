@@ -83,20 +83,18 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker "$SERVICE_USER"
     ok "Docker インストール完了"
-    warn "Docker グループを反映するため sg docker を使って続行します"
-    # newgrp はサブシェルを起動して以降のコマンドが続行されないため使用しない
-    # sg docker を使ってグループを反映したサブシェルでスクリプトを再実行する
-    # 注意: curl | bash でパイプ実行した場合は $0 が /dev/stdin 等になるため
-    #       この場合は一度ログアウト後に再ログインして再実行してください
-    exec sg docker "$0"
 else
     ok "Docker はすでにインストール済み: $(docker --version)"
 fi
 
-if ! docker compose version &>/dev/null; then
+if ! sudo docker compose version &>/dev/null; then
     sudo apt-get install -y docker-compose-plugin
 fi
-ok "$(docker compose version)"
+ok "$(sudo docker compose version)"
+
+# 以降の docker コマンドはすべて sudo 経由で実行（グループ反映不要）
+DOCKER="sudo docker"
+DOCKER_COMPOSE="sudo docker compose"
 
 # ════════════════════════════════════════════════════════════
 # Step 4: リポジトリをクローン
@@ -131,12 +129,11 @@ step "6/6" "Docker イメージをビルドしてコンテナを起動"
 cd "$BOT_DIR"
 
 echo "  イメージをビルド中（数分かかります）..."
-docker compose build --quiet
+$DOCKER_COMPOSE build --quiet
 ok "ビルド完了"
 
 echo "  コンテナを起動中..."
-# paper / web / cloudflared を一括起動
-docker compose up -d
+$DOCKER_COMPOSE up -d
 sleep 5
 ok "コンテナ起動完了"
 
@@ -173,7 +170,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 echo "  コンテナ状態:"
-docker compose ps | sed 's/^/    /'
+$DOCKER_COMPOSE ps | sed 's/^/    /'
 
 EXTERNAL_IP=$(curl -s -m 5 \
     "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" \

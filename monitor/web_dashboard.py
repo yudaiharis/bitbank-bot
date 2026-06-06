@@ -141,12 +141,18 @@ canvas{max-height:220px}
     </details>
   </div>
   <div class="panel" style="margin-bottom:20px" id="ci-panel">
-    <h2>GitHub Actions 自動改善履歴
-      <span style="font-size:11px;font-weight:400;color:#475569">毎週日曜 JST 02:00 自動実行</span>
-      <a id="ci-actions-link" href="#" target="_blank"
-         style="font-size:11px;color:#60a5fa;margin-left:10px;text-decoration:none">Actions ページ →</a>
-    </h2>
-    <div id="ci-content" style="font-size:13px;color:#64748b">読み込み中...</div>
+    <details id="ci-details">
+      <summary style="list-style:none;display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <h2 style="margin:0">GitHub Actions 自動改善履歴</h2>
+          <span style="font-size:11px;color:#475569">毎週日曜 JST 02:00 自動実行</span>
+          <a id="ci-actions-link" href="#" target="_blank"
+             style="font-size:11px;color:#60a5fa;text-decoration:none">Actions ページ →</a>
+        </div>
+        <span id="ci-badge" style="font-size:12px;color:#60a5fa;white-space:nowrap;margin-left:8px">▶ 表示する</span>
+      </summary>
+      <div id="ci-content" style="font-size:13px;color:#64748b;margin-top:14px">読み込み中...</div>
+    </details>
   </div>
   <div class="footer">30秒ごとに自動更新 &nbsp;|&nbsp; bitbank Public API</div>
 </div>
@@ -346,6 +352,11 @@ document.addEventListener('toggle', function(e) {
   if (e.target.id === 'strategy-details') {
     var badge = document.getElementById('strategy-badge');
     if (badge) badge.textContent = e.target.open ? '▼ 折りたたむ' : '▶ 展開する';
+  }
+  // GitHub Actions 自動改善履歴
+  if (e.target.id === 'ci-details') {
+    var badge = document.getElementById('ci-badge');
+    if (badge) badge.textContent = e.target.open ? '▼ 折りたたむ' : '▶ 表示する';
   }
   // ペア別パラメータの矢印
   if (e.target.id === 'pair-params-details') {

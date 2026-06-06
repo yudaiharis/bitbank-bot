@@ -1,0 +1,13 @@
+﻿# GitHub Actions workflow files must use LF
+.github/workflows/*.yml text eol=lf
+
+# Shell scripts must use LF
+*.sh text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# Other text files
+*.md text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf

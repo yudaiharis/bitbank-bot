@@ -1,4 +1,4 @@
-name: Weekly Backtest & Auto-Optimize
+﻿name: Weekly Backtest & Auto-Optimize
 
 on:
   schedule:

@@ -9,6 +9,7 @@ set -e
 REPO_URL="https://github.com/yudaiharis/bitbank-bot.git"
 BOT_DIR="/opt/bitbank-bot"
 SERVICE_USER="$(whoami)"
+DEFAULT_BRANCH="main"
 
 echo "========================================"
 echo "  bitbank-bot GCP Docker セットアップ"
@@ -16,14 +17,29 @@ echo "========================================"
 
 # ── 0. 最低限のツールをインストール（Minimal 対応）─────────
 echo ""
-echo "[0/5] 基本ツールを確認中..."
+echo "[0/6] 基本ツールを確認中..."
 sudo apt-get update -qq
 sudo apt-get install -y -qq curl git ca-certificates
 echo "  curl / git インストール済み"
 
+# ── 0.5. SWAP 設定（e2-micro 1GB RAM 必須）────────────────
+echo ""
+echo "[0.5/6] SWAP 1GB を設定中（e2-micro OOM対策）..."
+if [ ! -f /swapfile ]; then
+    sudo fallocate -l 1G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
+    echo "  SWAP 1GB を設定しました"
+else
+    echo "  SWAP はすでに設定済みです"
+fi
+free -h | grep Swap
+
 # ── 1. Docker インストール ──────────────────────────────────
 echo ""
-echo "[1/5] Docker をインストール中..."
+echo "[1/6] Docker をインストール中..."
 if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker "$SERVICE_USER"
@@ -40,10 +56,10 @@ echo "  $(docker compose version)"
 
 # ── 2. リポジトリをクローン ─────────────────────────────────
 echo ""
-echo "[2/5] リポジトリをクローン中..."
+echo "[2/6] リポジトリをクローン中..."
 if [ -d "$BOT_DIR" ]; then
     echo "  既存ディレクトリを更新..."
-    cd "$BOT_DIR" && git pull origin master
+    cd "$BOT_DIR" && git pull origin "$DEFAULT_BRANCH"
 else
     sudo git clone "$REPO_URL" "$BOT_DIR"
     sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$BOT_DIR"
@@ -52,7 +68,7 @@ cd "$BOT_DIR"
 
 # ── 3. .env 設定 ────────────────────────────────────────────
 echo ""
-echo "[3/5] 環境変数を設定中..."
+echo "[3/6] 環境変数を設定中..."
 if [ ! -f "$BOT_DIR/.env" ]; then
     cp "$BOT_DIR/.env.example" "$BOT_DIR/.env"
     echo ""
@@ -73,7 +89,7 @@ fi
 
 # ── 4. イメージビルド＆起動 ─────────────────────────────────
 echo ""
-echo "[4/5] Dockerイメージをビルドして起動中..."
+echo "[4/6] Dockerイメージをビルドして起動中..."
 cd "$BOT_DIR"
 docker compose build --quiet
 docker compose up -d web paper
@@ -81,7 +97,7 @@ echo "  起動完了"
 
 # ── 5. systemd で自動起動設定 ───────────────────────────────
 echo ""
-echo "[5/5] systemd で自動起動を設定中..."
+echo "[5/6] systemd で自動起動を設定中..."
 sudo tee /etc/systemd/system/bitbank-bot.service > /dev/null <<EOF
 [Unit]
 Description=bitbank-bot Docker Compose

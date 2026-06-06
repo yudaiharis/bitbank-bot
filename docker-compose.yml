@@ -19,8 +19,8 @@ services:
       - GITHUB_REPO=${GITHUB_REPO:-yudaiharis/bitbank-bot}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
     restart: unless-stopped
-    depends_on:
-      - paper
+    mem_limit: 256m
+    memswap_limit: 384m
 
   # ── ペーパートレード（常時起動）────────────────────────────
   paper:
@@ -35,6 +35,8 @@ services:
       - TRADES_DB=/app/data/trades.db
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 768m
 
   # ── バックテスト（手動実行: docker compose run --rm backtest）
   backtest:

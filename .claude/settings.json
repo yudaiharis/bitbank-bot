@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bitbank-bot": {
+      "command": "python",
+      "args": ["mcp_server/server.py"],
+      "cwd": "C:\\Users\\Yudai Hosojima\\dev\\bitbank-bot",
+      "env": {
+        "TRADES_DB": "C:\\Users\\Yudai Hosojima\\dev\\bitbank-bot\\trades.db"
+      }
+    }
+  }
+}

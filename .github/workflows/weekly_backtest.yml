@@ -90,9 +90,7 @@ jobs:
   commit-config:
     name: 最適パラメータをコミット
     needs: backtest
-    if: |
-      needs.backtest.outputs.passed == 'true' &&
-      github.event.inputs.dry_run != 'true'
+    if: needs.backtest.outputs.passed == 'true' && github.event.inputs.dry_run != 'true'
     runs-on: ubuntu-latest
 
     steps:

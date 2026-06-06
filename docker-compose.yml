@@ -9,6 +9,10 @@ services:
       - ./trades.db:/app/trades.db
       - ./reports:/app/reports
       - ./config.yaml:/app/config.yaml
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_REPO=${GITHUB_REPO:-yudaiharis/bitbank-bot}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
     restart: unless-stopped
 
   # バックテスト（手動実行用: docker compose run backtest）

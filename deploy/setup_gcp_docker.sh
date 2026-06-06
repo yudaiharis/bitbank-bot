@@ -14,6 +14,13 @@ echo "========================================"
 echo "  bitbank-bot GCP Docker セットアップ"
 echo "========================================"
 
+# ── 0. 最低限のツールをインストール（Minimal 対応）─────────
+echo ""
+echo "[0/5] 基本ツールを確認中..."
+sudo apt-get update -qq
+sudo apt-get install -y -qq curl git ca-certificates
+echo "  curl / git インストール済み"
+
 # ── 1. Docker インストール ──────────────────────────────────
 echo ""
 echo "[1/5] Docker をインストール中..."

@@ -22,7 +22,7 @@ Step 3: Cloudflare TunnelでHTTPS公開（5分）※任意
 | 名前 | `bitbank-bot` |
 | リージョン | `us-west1`（オレゴン）|
 | マシンタイプ | `e2-micro` |
-| OS | Ubuntu 22.04 LTS |
+| OS | Ubuntu 22.04 LTS **Minimal** |
 | ディスク | 標準永続ディスク 30GB |
 | バックアップ | なし |
 

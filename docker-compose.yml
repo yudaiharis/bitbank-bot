@@ -38,19 +38,21 @@ services:
     mem_limit: 512m
     memswap_limit: 768m
 
-  # ── Cloudflare Tunnel（HTTPS公開）────────────────────────
+  # ── Cloudflare Quick Tunnel（ドメイン不要・HTTPS自動発行）─
+  # 起動のたびに *.trycloudflare.com の URL が変わるが
+  # 起動時に Slack へ自動通知するため運用上問題なし
   cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.cloudflared
     environment:
-      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - TUNNEL_TARGET=http://web:5000
     restart: unless-stopped
     depends_on:
       - web
     mem_limit: 64m
     memswap_limit: 128m
-    profiles:
-      - cloudflare
 
   # ── バックテスト（手動実行: docker compose run --rm backtest）
   backtest:

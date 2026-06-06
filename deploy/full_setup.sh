@@ -38,20 +38,16 @@ echo ""
 echo "  以下の情報を準備してください："
 echo "  ① GitHub Personal Access Token（read-only）"
 echo "     → https://github.com/settings/tokens/new?scopes=repo"
-echo "  ② Cloudflare Tunnel トークン"
-echo "     → https://one.dash.cloudflare.com/"
-echo "     → Zero Trust → Networks → Tunnels → Create a tunnel"
-echo "     → Connector: Docker → トークンをコピー"
-echo "     → Public Hostname:"
-echo "        Service: http://web:5000"
-echo "        Subdomain/Domain: 任意"
+echo "  ② Slack Webhook URL（起動時に HTTPS URL が通知されます）"
+echo "     → https://api.slack.com/messaging/webhooks"
+echo ""
+echo "  ※ Cloudflare のドメイン・トンネル設定は不要です"
+echo "     起動時に *.trycloudflare.com の URL が自動発行され"
+echo "     Slack に通知されます"
 echo ""
 
 read -p "  GitHub Personal Access Token (ghp_...): " GITHUB_TOKEN
 [ -z "$GITHUB_TOKEN" ] && die "GITHUB_TOKEN が空です"
-
-read -p "  Cloudflare Tunnel トークン (eyJ...): " CF_TUNNEL_TOKEN
-[ -z "$CF_TUNNEL_TOKEN" ] && die "CF_TUNNEL_TOKEN が空です"
 
 read -p "  Slack Webhook URL（任意・不要なら Enter）: " SLACK_WEBHOOK_URL
 
@@ -118,7 +114,6 @@ cat > "$BOT_DIR/.env" <<EOF
 GITHUB_TOKEN=$GITHUB_TOKEN
 GITHUB_REPO=yudaiharis/bitbank-bot
 SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL
-CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN
 EOF
 chmod 600 "$BOT_DIR/.env"
 ok ".env を作成しました"
@@ -135,7 +130,7 @@ ok "ビルド完了"
 
 echo "  コンテナを起動中..."
 # paper / web / cloudflared を一括起動
-docker compose --profile cloudflare up -d
+docker compose up -d
 sleep 5
 ok "コンテナ起動完了"
 
@@ -150,8 +145,8 @@ After=docker.service network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$BOT_DIR
-ExecStart=/usr/bin/docker compose --profile cloudflare up -d
-ExecStop=/usr/bin/docker compose --profile cloudflare down
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=120
 
 [Install]
@@ -172,7 +167,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 echo "  コンテナ状態:"
-docker compose --profile cloudflare ps | sed 's/^/    /'
+docker compose ps | sed 's/^/    /'
 
 EXTERNAL_IP=$(curl -s -m 5 \
     "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" \
@@ -187,11 +182,11 @@ echo "                      → https://one.dash.cloudflare.com/"
 echo "                      → Zero Trust → Networks → Tunnels"
 echo ""
 echo -e "  ${BOLD}よく使うコマンド:${NC}"
-echo "    docker compose --profile cloudflare ps          # 状態確認"
+echo "    docker compose ps          # 状態確認"
 echo "    docker compose logs -f paper                    # ボットログ"
 echo "    docker compose logs -f cloudflared              # トンネルログ"
-echo "    docker compose --profile cloudflare restart     # 全体再起動"
-echo "    cd $BOT_DIR && git pull origin main && docker compose --profile cloudflare up -d"
+echo "    docker compose restart     # 全体再起動"
+echo "    cd $BOT_DIR && git pull origin main && docker compose up -d"
 echo "                                                     # コード更新"
 echo ""
 echo "  ★ GCPファイアウォールはポート開放不要（Cloudflare Tunnelが終端処理）"

@@ -73,32 +73,28 @@ bash /opt/bitbank-bot/deploy/setup_gcp_docker.sh
 
 ---
 
-## Step 3: Cloudflare Tunnel（HTTPS公開）
+## Step 3: Cloudflare Quick Tunnel（ドメイン不要・自動HTTPS）
 
-### 3-1. Cloudflare コンソールでトンネルを作成
+**Cloudflare のアカウント・ドメイン・トークン設定は一切不要です。**
 
-1. https://one.dash.cloudflare.com/ → **Zero Trust** → **Networks** → **Tunnels**
-2. **「Create a tunnel」** → Connector: **Docker** を選択
-3. トークン（`eyJ...` で始まる文字列）をコピーしておく
-4. **Public Hostname** を設定：
-   - Subdomain: `bitbank`（任意）
-   - Domain: 自分のドメイン
-   - Service: `http://web:5000` ← **ここが重要（Docker内部ネットワーク経由）**
+`docker compose up` 時に `cloudflared` コンテナが自動的に起動し、
+`*.trycloudflare.com` の HTTPS URL を発行します。
 
-### 3-2. VM 上でセットアップスクリプトを実行
+URL は起動のたびに変わりますが、**Slack に自動通知**されます：
 
-```bash
-bash /opt/bitbank-bot/deploy/setup_cloudflare.sh
+```
+🌐 bitbank-bot ダッシュボード URL（更新）
+https://xxxx-xxxx-xxxx.trycloudflare.com
 ```
 
-→ トークンを貼り付けると `cloudflared` コンテナが起動し HTTPS URL が発行されます。
-→ GCP のファイアウォール開放は不要です（Cloudflare が終端処理）。
+> ★ GCP のファイアウォール設定は不要です（Cloudflare が終端処理）
 
 ---
 
-## GCPファイアウォール設定
+## GCPファイアウォール設定（Quick Tunnel 使用時は不要）
 
-ブラウザから `http://VM_IP:8080` でアクセスする場合：
+Cloudflare Quick Tunnel を使う場合、ポート開放は不要です。
+直接 `http://VM_IP:8080` でアクセスしたい場合のみ以下を設定：
 
 1. GCPコンソール → **VPCネットワーク** → **ファイアウォール**
 2. **「ファイアウォールルールを作成」**

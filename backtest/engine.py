@@ -400,14 +400,15 @@ def _pair_worker(args: tuple) -> dict:
 
     report_path = write_report(pair, candle, days, base_result, opt_data, cfg)
 
-    if do_optimize and do_update and opt_data:
-        update_config(opt_data["best_cfg"])
+    # NOTE: config.yaml の書き込みはメインプロセスで行う（並列競合防止）
+    # do_update フラグを結果に乗せて呼び出し元に委ねる
 
     return {
         "pair":        pair,
         "base_result": base_result,
         "opt_data":    opt_data,
         "report":      report_path,
+        "do_update":   do_update,
     }
 
 
@@ -437,6 +438,23 @@ def run_all_pairs(pairs: list, candle: str, days: int, cfg: dict,
             br = r["base_result"]
             print(f"{r['pair']:12} {br['win_rate']*100:6.1f}% "
                   f"¥{br['total_pnl']:+10,.0f} {br['max_drawdown']*100:6.1f}%")
+
+    # config.yaml 更新はメインプロセスで1回だけ実行（並列書き込み競合防止）
+    if do_optimize and do_update:
+        # 全ペアの最良スコアを比較して最優秀パラメータで更新
+        best_r = None
+        best_score = -1.0
+        for r in results:
+            if "error" in r or not r.get("opt_data"):
+                continue
+            score = r["opt_data"]["all_results"][0]["score"]
+            if score > best_score:
+                best_score = score
+                best_r = r
+        if best_r:
+            print(f"\n📝 config.yaml を {best_r['pair']} の最良パラメータで更新（スコア {best_score:.4f}）")
+            update_config(best_r["opt_data"]["best_cfg"])
+
     return results
 
 

@@ -17,7 +17,7 @@ CF_PID=$!
 # URL が出現するまで最大 90 秒待つ
 TUNNEL_URL=""
 for i in $(seq 1 90); do
-    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf.log 2>/dev/null | head -1)
+    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf.log 2>/dev/null | head -1 || true)
     if [ -n "$TUNNEL_URL" ]; then
         break
     fi

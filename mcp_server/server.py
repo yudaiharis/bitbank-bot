@@ -435,10 +435,17 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
             fee = pos["amount_jpy"] * cfg.get("taker_fee", 0.0012)
             pnl = gross - fee
 
+            # 強制決済後の残高を取得（最新 closed トレードの balance_after を基準に）
+            last_closed = conn.execute(
+                "SELECT balance_after FROM trades WHERE status='closed' ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            prev_balance = last_closed["balance_after"] if last_closed else cfg.get("initial_balance_jpy", 1_000_000)
+            new_balance  = prev_balance + pnl
+
             conn.execute("""
-                UPDATE trades SET exit_price=?, pnl=?, status='closed', reason=?
+                UPDATE trades SET exit_price=?, pnl=?, balance_after=?, status='closed', reason=?
                 WHERE id=?
-            """, (exit_price, pnl, reason, pos["id"]))
+            """, (exit_price, pnl, new_balance, reason, pos["id"]))
             conn.commit()
             conn.close()
 
@@ -541,7 +548,7 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
                 INSERT INTO trades (pair, side, entry_price, amount_jpy, status, loop_num, timestamp, reason)
                 VALUES (?, ?, ?, ?, 'open', ?, ?, ?)
             """, (pair, side, price, amount_jpy, loop_num,
-                  datetime.now(timezone(timedelta(hours=9))).isoformat(), reason))
+                  datetime.now().isoformat(), reason))
             conn.commit()
             conn.close()
 

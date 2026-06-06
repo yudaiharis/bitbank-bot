@@ -44,6 +44,9 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker "$SERVICE_USER"
     echo "  Docker インストール完了"
+    echo "  Docker グループを反映するため sg docker で続行します"
+    # newgrp の代わりに sg を使用（newgrp は後続コマンドを続行しない）
+    exec sg docker "$0"
 else
     echo "  Docker はすでにインストール済みです"
 fi
@@ -92,7 +95,7 @@ echo ""
 echo "[4/6] Dockerイメージをビルドして起動中..."
 cd "$BOT_DIR"
 docker compose build --quiet
-docker compose up -d web paper
+docker compose up -d web paper cloudflared
 echo "  起動完了"
 
 # ── 5. systemd で自動起動設定 ───────────────────────────────

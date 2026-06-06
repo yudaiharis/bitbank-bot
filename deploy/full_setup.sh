@@ -83,6 +83,12 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker "$SERVICE_USER"
     ok "Docker インストール完了"
+    warn "Docker グループを反映するため sg docker を使って続行します"
+    # newgrp はサブシェルを起動して以降のコマンドが続行されないため使用しない
+    # sg docker を使ってグループを反映したサブシェルでスクリプトを再実行する
+    # 注意: curl | bash でパイプ実行した場合は $0 が /dev/stdin 等になるため
+    #       この場合は一度ログアウト後に再ログインして再実行してください
+    exec sg docker "$0"
 else
     ok "Docker はすでにインストール済み: $(docker --version)"
 fi

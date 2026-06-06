@@ -3,13 +3,13 @@ mode: paper
 # ── トレード対象ペア（5分足バックテスト上位7ペア）─────────────────
 # 除外: btc_jpy(+¥10K), eth_jpy(+¥9K), doge_jpy(+¥2K)
 pairs:
-  - xlm_jpy    # +¥93K / DD 1.8% 🥇
-  - ada_jpy    # +¥62K / DD 1.9%
-  - link_jpy   # +¥57K / DD 3.8%
-  - sol_jpy    # +¥33K / DD 2.4%
-  - avax_jpy   # +¥24K / DD 3.4%
-  - dot_jpy    # +¥22K / DD 3.9%
-  - xrp_jpy    # +¥19K / DD 2.5%
+  - xlm_jpy    # MTF: +¥70K / DD 1.2% 🥇
+  - xrp_jpy    # MTF: +¥51K / DD 1.3% ✅ 大幅改善
+  - dot_jpy    # MTF: +¥38K / DD 2.1% ✅ 大幅改善
+  - ada_jpy    # MTF: +¥38K / DD 3.1%
+  - sol_jpy    # MTF: +¥28K / DD 1.2%
+  - avax_jpy   # MTF: +¥25K / DD 2.9%
+  # link_jpy は MTF で -¥26K のため除外
 
 excluded_pairs: []  # 自律改善で追加される
 

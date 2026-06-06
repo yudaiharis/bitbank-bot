@@ -375,7 +375,7 @@ def optimize(df: pd.DataFrame, base_cfg: dict,
 # ── 複数ペア並列実行ワーカー ─────────────────────────────────
 def _pair_worker(args: tuple) -> dict:
     """
-    複数ペアを並列バックテストするワーカー。
+    複数ペアを並列バックテストするワーカー（MTF対応）。
     args = (pair, candle, days, cfg, do_optimize, do_update)
     """
     pair, candle, days, cfg, do_optimize, do_update = args
@@ -383,12 +383,20 @@ def _pair_worker(args: tuple) -> dict:
     pair_overrides = cfg.get("pair_params", {}).get(pair, {})
     cfg = {**cfg, **pair_overrides}
 
+    # メイン足データ取得
     df = fetch_ohlcv(pair, candle, days)
     if df.empty:
         return {"pair": pair, "error": "データ取得失敗"}
 
-    base_result = run_backtest(df, cfg)
-    opt_data = optimize(df, cfg) if do_optimize else None
+    # 1時間足データ取得（MTFフィルター用）
+    df_htf = None
+    if cfg.get("use_htf_filter", True) and candle != "1hour":
+        df_htf = fetch_ohlcv(pair, "1hour", days)
+        if df_htf.empty:
+            df_htf = None
+
+    base_result = run_backtest(df, cfg, df_htf=df_htf)
+    opt_data = optimize(df, cfg, df_htf=df_htf) if do_optimize else None
 
     report_path = write_report(pair, candle, days, base_result, opt_data, cfg)
 

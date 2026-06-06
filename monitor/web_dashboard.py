@@ -137,14 +137,6 @@ canvas{max-height:220px}
     </details>
   </div>
   <div class="panel" style="margin-bottom:20px">
-    <h2>AI分析 <span style="font-size:11px;font-weight:400;color:#475569">自動（毎週日曜2時）または手動実行</span></h2>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-      <button onclick="triggerAnalysis()" id="analyze-btn" style="font-size:13px;padding:8px 18px;background:#312e81;border:1px solid #4338ca;border-radius:6px;color:#a78bfa;cursor:pointer">今すぐ分析・改善を実行</button>
-      <span id="analyze-status" style="font-size:12px;color:#64748b">状態を確認中...</span>
-    </div>
-    <div id="analyze-log" style="font-size:12px;color:#475569;font-family:monospace;background:#0f1117;padding:8px 12px;border-radius:6px;min-height:24px"></div>
-  </div>
-  <div class="panel" style="margin-bottom:20px">
     <h2>レポートダウンロード <span style="font-size:11px;font-weight:400;color:#475569">（PCのClaude Codeで手動分析する場合）</span></h2>
     <div id="dl-reports">読み込み中...</div>
     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
@@ -158,73 +150,6 @@ canvas{max-height:220px}
 <script>
 let chart = null;
 
-async function triggerAnalysis() {
-  const btn = document.getElementById('analyze-btn');
-  const status = document.getElementById('analyze-status');
-  btn.disabled = true;
-  btn.style.opacity = '0.5';
-  status.textContent = '起動中...';
-  try {
-    const r = await fetch('/api/analyze', {method:'POST'});
-    const d = await r.json();
-    status.textContent = d.message;
-    if (d.status === 'started') {
-      status.style.color = '#34d399';
-      pollAnalysisStatus();
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-    }
-  } catch(e) {
-    status.textContent = 'エラーが発生しました';
-    btn.disabled = false;
-    btn.style.opacity = '1';
-  }
-}
-
-async function pollAnalysisStatus() {
-  const btn = document.getElementById('analyze-btn');
-  const status = document.getElementById('analyze-status');
-  const log = document.getElementById('analyze-log');
-  const r = await fetch('/api/analysis_status');
-  const d = await r.json();
-  log.textContent = d.last_log || '';
-  if (d.running) {
-    status.textContent = '分析実行中... (数分かかります)';
-    status.style.color = '#fbbf24';
-    setTimeout(pollAnalysisStatus, 5000);
-  } else {
-    status.textContent = d.latest_improvement
-      ? `完了: ${d.latest_improvement}`
-      : '待機中';
-    status.style.color = '#34d399';
-    btn.disabled = false;
-    btn.style.opacity = '1';
-    loadReports();
-  }
-}
-
-async function loadReports() {
-  try {
-    const r = await fetch('/api/reports');
-    const d = await r.json();
-    const el = document.getElementById('dl-reports');
-    if (d.reports.length === 0) {
-      el.innerHTML = '<span style="color:#475569;font-size:13px">まだレポートがありません（Loop完了後に生成されます）</span>';
-    } else {
-      el.innerHTML = d.reports.map(r =>
-        `<div class="scanner-row">
-          <span class="pair">Loop ${r.loop} レポート</span>
-          <span class="score">${r.updated}</span>
-          <a href="/download/report/${r.loop}" style="font-size:12px;color:#60a5fa;text-decoration:none;padding:3px 10px;border:1px solid #2d3148;border-radius:4px">ダウンロード</a>
-        </div>`
-      ).join('');
-    }
-    if (d.has_final) {
-      document.getElementById('dl-final').style.display = 'inline-block';
-    }
-  } catch(e) { console.error(e); }
-}
 
 async function load() {
   try {
@@ -422,11 +347,7 @@ document.addEventListener('toggle', function(e) {
 }, true);
 
 load();
-loadReports();
-pollAnalysisStatus();
 setInterval(load, 30000);
-setInterval(loadReports, 60000);
-setInterval(pollAnalysisStatus, 30000);
 </script>
 </body>
 </html>"""
@@ -435,47 +356,6 @@ setInterval(pollAnalysisStatus, 30000);
 @app.route("/")
 def index():
     return HTML
-
-
-@app.route("/api/analyze", methods=["POST"])
-def trigger_analysis():
-    """手動で分析を即時起動"""
-    import subprocess
-    lock = os.path.join(os.path.dirname(__file__), "..", "reports/.analysis_running")
-    if os.path.exists(lock):
-        return jsonify({"status": "running", "message": "分析がすでに実行中です"})
-    script = os.path.join(os.path.dirname(__file__), "..", "deploy/weekly_analysis.sh")
-    if not os.path.exists(script):
-        return jsonify({"status": "error", "message": "分析スクリプトが見つかりません"})
-    subprocess.Popen(["bash", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return jsonify({"status": "started", "message": "分析を開始しました（数分かかります）"})
-
-
-@app.route("/api/analysis_status")
-def analysis_status():
-    """分析の実行状態を返す"""
-    lock = os.path.join(os.path.dirname(__file__), "..", "reports/.analysis_running")
-    log = os.path.join(os.path.dirname(__file__), "..", "reports/analysis.log")
-    running = os.path.exists(lock)
-    last_log = ""
-    if os.path.exists(log):
-        try:
-            with open(log) as f:
-                lines = f.readlines()
-                last_log = lines[-1].strip() if lines else ""
-        except Exception:
-            pass
-    # 最新の自動改善レポートを確認
-    import glob
-    improvements = sorted(glob.glob(
-        os.path.join(os.path.dirname(__file__), "..", "reports/auto_improvement_*.md")
-    ))
-    latest_improvement = os.path.basename(improvements[-1]) if improvements else None
-    return jsonify({
-        "running": running,
-        "last_log": last_log,
-        "latest_improvement": latest_improvement,
-    })
 
 
 @app.route("/download/report/<int:loop_num>")

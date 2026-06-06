@@ -1,28 +1,50 @@
+volumes:
+  trades-data:    # trades.db を永続化する named volume
+
 services:
-  # Webダッシュボード（常時起動）
+  # ── Webダッシュボード ──────────────────────────────────────
   web:
     build: .
+    image: bitbank-bot
     command: python monitor/web_dashboard.py
     ports:
       - "8080:5000"
     volumes:
-      - ./trades.db:/app/trades.db
+      - trades-data:/app/data
       - ./reports:/app/reports
       - ./config.yaml:/app/config.yaml
     environment:
+      - TRADES_DB=/app/data/trades.db
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITHUB_REPO=${GITHUB_REPO:-yudaiharis/bitbank-bot}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
     restart: unless-stopped
+    depends_on:
+      - paper
 
-  # バックテスト（手動実行用: docker compose run backtest）
+  # ── ペーパートレード（常時起動）────────────────────────────
+  paper:
+    build: .
+    image: bitbank-bot
+    command: python main.py --mode paper
+    volumes:
+      - trades-data:/app/data
+      - ./reports:/app/reports
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - TRADES_DB=/app/data/trades.db
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    restart: unless-stopped
+
+  # ── バックテスト（手動実行: docker compose run --rm backtest）
   backtest:
     build: .
+    image: bitbank-bot
     command: >
       python backtest/engine.py
-      --pair ${PAIR:-btc_jpy}
-      --days ${DAYS:-365}
-      --candle ${CANDLE:-1hour}
+      --all-pairs
+      --days ${DAYS:-90}
+      --candle ${CANDLE:-5min}
       ${OPTIMIZE:+--optimize}
       ${UPDATE:+--update}
     volumes:
@@ -31,18 +53,3 @@ services:
       - ./config.yaml:/app/config.yaml
     profiles:
       - backtest
-
-  # ペーパートレード（手動実行用: docker compose run paper）
-  paper:
-    build: .
-    command: python main.py --mode paper
-    stdin_open: true
-    tty: true
-    volumes:
-      - ./trades.db:/app/trades.db
-      - ./reports:/app/reports
-      - ./config.yaml:/app/config.yaml
-    environment:
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
-    profiles:
-      - paper

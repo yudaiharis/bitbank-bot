@@ -1,149 +1,141 @@
-# GCP + Cloudflare Tunnel デプロイ手順書
+# GCP Docker デプロイ手順
 
-## 全体の流れ（所要時間：約25分）
+## 全体の流れ（所要時間：約20分）
 
 ```
-Step 1: GCPでインスタンスを作成（5分）
-Step 2: Cloudflareアカウントを作成しTunnelトークンを取得（10分）
-Step 3: ファイルをアップロード（3分）
-Step 4: セットアップスクリプトを実行（7分）
+Step 1: GCPでVMを作成（5分）
+Step 2: SSHでVMに接続しセットアップ（10分）
+Step 3: Cloudflare TunnelでHTTPS公開（5分）※任意
 ```
 
 ---
 
-## Step 1: GCPでインスタンスを作成
+## Step 1: GCPでVMを作成
 
-1. [Google Cloud Console](https://console.cloud.google.com/) を開く
-2. 左メニュー → **Compute Engine** → **VM インスタンス**
-3. **「インスタンスを作成」** をクリック
+1. [Google Cloud Console](https://console.cloud.google.com/) → **Compute Engine** → **VMインスタンス**
+2. **「インスタンスを作成」**
 
-### 設定値（無料枠に必ず合わせること）
+### 推奨設定（無料枠）
 
 | 項目 | 設定値 |
 |---|---|
 | 名前 | `bitbank-bot` |
-| リージョン | `us-west1`（オレゴン）★必須 |
-| ゾーン | `us-west1-a` |
-| マシンタイプ | `e2-micro` ★必須 |
-| ブートディスクOS | Ubuntu 22.04 LTS |
-| ブートディスク種類 | **標準永続ディスク** ★必須 |
-| ブートディスクサイズ | 30 GB |
-| バックアップ | **なし** ★必須 |
+| リージョン | `us-west1`（オレゴン）|
+| マシンタイプ | `e2-micro` |
+| OS | Ubuntu 22.04 LTS |
+| ディスク | 標準永続ディスク 30GB |
+| バックアップ | なし |
 
-4. **「作成」** をクリック（1〜2分で起動）
+3. **「作成」** → 起動まで1〜2分待つ
 
 ---
 
-## Step 2: Cloudflareアカウントを作成しTunnelを設定
+## Step 2: VMセットアップ
 
-### 2-1. アカウント作成
-
-1. https://www.cloudflare.com/ にアクセス
-2. 右上の **「Sign Up」** → メールとパスワードで登録（無料）
-3. 届いたメールの確認リンクをクリック
-
-### 2-2. Zero TrustでTunnelを作成
-
-1. ダッシュボードにログイン → 左メニュー **「Zero Trust」**
-2. **Networks** → **Tunnels** → **「Create a tunnel」**
-3. タイプ **「Cloudflared」** を選択 → 「Next」
-4. Tunnel名（例: `bitbank-bot`）を入力 → 「Save tunnel」
-
-### 2-3. トークンをコピー
-
-OS選択で **Linux → Debian → 64-bit** を選ぶと以下が表示されます：
-
-```
-sudo cloudflared service install eyJhIjoiXX...（長いトークン）
-```
-
-**`eyJhIjoiXX...` のトークン部分だけ**をメモ帳にコピー。
-
-### 2-4. Public Hostnameを設定
-
-「Next」をクリックして設定：
-
-| 項目 | 設定値 |
-|---|---|
-| Service Type | `HTTP` |
-| URL | `localhost:8080` |
-
-「Save tunnel」でURLが発行されます（例: `https://bitbank-xxxx.cfargotunnel.com`）
-
----
-
-## Step 3: ファイルをアップロード
-
-GCPコンソール → VMインスタンス → **「SSH」** ボタン → ブラウザターミナルが開く
+GCPコンソールの **「SSH」ボタン** → ブラウザターミナルが開く
 
 ```bash
-# アップロードは右上の歯車アイコン →「ファイルをアップロード」
-# bitbank-bot.zip をアップロード後：
-sudo apt-get install -y unzip
-unzip bitbank-bot.zip
+# セットアップスクリプトをダウンロードして実行
+curl -fsSL https://raw.githubusercontent.com/yudaiharis/bitbank-bot/master/deploy/setup_gcp_docker.sh | bash
 ```
 
----
-
-## Step 4: セットアップスクリプトを順番に実行
+初回実行後、`.env` の設定が必要と表示されます：
 
 ```bash
-cd bitbank-bot
+nano /opt/bitbank-bot/.env
+```
 
-# 基本セットアップ（SWAP・Python・systemd・nginx）
-bash deploy/setup_gcp.sh
+以下を入力：
 
-# Cloudflare Tunnel設定
-bash deploy/setup_cloudflare.sh
-# → トークンを聞かれるのでStep 2-3でコピーしたものを貼り付け
+```
+GITHUB_TOKEN=ghp_xxxx   # GitHubのread-only PAT（後述）
+GITHUB_REPO=yudaiharis/bitbank-bot
+SLACK_WEBHOOK_URL=       # 任意
+```
+
+設定後、再実行：
+
+```bash
+bash /opt/bitbank-bot/deploy/setup_gcp_docker.sh
 ```
 
 ---
 
-## Step 5: 完了
+## GitHub PAT の作成（read-only）
 
-Cloudflareコンソールで確認したURLにアクセス：
+1. https://github.com/settings/tokens/new を開く
+2. 設定：
+   - Note: `bitbank-bot-gcp`
+   - Expiration: `No expiration`
+   - Scope: **`repo`** にチェック
+3. **「Generate token」** → `ghp_...` をコピー
+4. `.env` の `GITHUB_TOKEN=` に貼り付け
 
+---
+
+## Step 3: Cloudflare Tunnel（HTTPS公開）
+
+```bash
+bash /opt/bitbank-bot/deploy/setup_cloudflare.sh
 ```
-https://bitbank-xxxx.cfargotunnel.com
-```
 
-鍵マークが表示されればHTTPS化成功です。
+→ トークンを貼り付けるとHTTPS URLが発行されます。
+→ スマホ・どこからでもダッシュボードにアクセス可能になります。
+
+---
+
+## GCPファイアウォール設定
+
+ブラウザから `http://VM_IP:8080` でアクセスする場合：
+
+1. GCPコンソール → **VPCネットワーク** → **ファイアウォール**
+2. **「ファイアウォールルールを作成」**
+   - 名前: `allow-bitbank-dashboard`
+   - ターゲット: `すべてのインスタンス`
+   - ソースIPの範囲: `0.0.0.0/0`（または自分のIPのみ）
+   - プロトコルとポート: `TCP 8080`
+
+※ Cloudflare Tunnel を使う場合はこの設定不要
 
 ---
 
 ## よく使うコマンド
 
 ```bash
+cd /opt/bitbank-bot
+
 # 状態確認
-sudo systemctl status bitbank-bot bitbank-web cloudflared
+docker compose ps
 
 # ログ確認
-sudo journalctl -u bitbank-bot -f
-sudo journalctl -u cloudflared -f
+docker compose logs -f paper    # ペーパートレード
+docker compose logs -f web      # ダッシュボード
 
-# 再起動
-sudo systemctl restart bitbank-bot
+# 最新コードに更新
+git pull origin master
+docker compose build --quiet
+docker compose up -d
 
-# メモリ・ディスク確認
-free -h && df -h
+# バックテスト実行（手動）
+docker compose run --rm backtest
+
+# GitHub Actionsが自動更新した後の反映
+git pull origin master && docker compose up -d
 ```
 
 ---
 
-## トラブルシューティング
+## GitHub Actions との連携
 
-### ページが開かない
+毎週日曜 JST 02:00 に GitHub Actions が自動でバックテストを実行し、
+閾値合格時は `config.yaml` を git commit します。
 
-```bash
-sudo systemctl status cloudflared
-curl http://localhost:5000   # ダッシュボードがローカルで動いているか確認
-```
-
-### トークンを間違えた
+GCPコンテナに反映するには：
 
 ```bash
-sudo systemctl stop cloudflared
-sudo cloudflared service uninstall
-bash deploy/setup_cloudflare.sh  # 再実行
+# GCP VM 上で実行（手動）
+cd /opt/bitbank-bot && git pull origin master && docker compose up -d
 ```
+
+または GitHub Actions の `deploy-gcp` ジョブに SSH デプロイを設定することで自動化できます。
+（`GCP_HOST`、`GCP_USER`、`GCP_SSH_KEY`、`GCP_BOT_DIR` を GitHub Secrets に設定）

@@ -22,6 +22,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
+from multiprocessing import Pool, cpu_count
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -102,44 +103,47 @@ def fetch_ohlcv(pair: str, candle_type: str, days: int) -> pd.DataFrame:
 # ============================================================
 
 def add_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """RSI・ボリンジャーバンドを追加"""
-    try:
-        import ta
-        df = df.copy()
-        df["rsi"] = ta.momentum.RSIIndicator(
-            df["close"], window=cfg.get("rsi_period", 14)
-        ).rsi()
-        bb = ta.volatility.BollingerBands(
-            df["close"],
-            window=cfg.get("bb_period", 20),
-            window_dev=cfg.get("bb_std", 2.0)
-        )
-        df["bb_upper"] = bb.bollinger_hband()
-        df["bb_lower"] = bb.bollinger_lband()
-    except ImportError:
-        # taライブラリがない場合の簡易実装
-        rp = cfg.get("rsi_period", 14)
-        delta = df["close"].diff()
-        gain = delta.clip(lower=0).rolling(rp).mean()
-        loss = (-delta.clip(upper=0)).rolling(rp).mean()
-        rs = gain / loss.replace(0, np.nan)
-        df["rsi"] = 100 - 100 / (1 + rs)
-        bp = cfg.get("bb_period", 20)
-        bs = cfg.get("bb_std", 2.0)
-        ma = df["close"].rolling(bp).mean()
-        std = df["close"].rolling(bp).std()
-        df["bb_upper"] = ma + bs * std
-        df["bb_lower"] = ma - bs * std
+    """RSI・ボリンジャーバンド・EMAフィルターを追加"""
+    import ta as _ta
+    min_len = max(cfg.get("bb_period", 20), cfg.get("ema_filter_period", 50)) + 5
+    if len(df) < min_len:
+        return df
+    df = df.copy()
+    df["rsi"] = _ta.momentum.RSIIndicator(
+        df["close"], window=cfg.get("rsi_period", 14)
+    ).rsi()
+    bb = _ta.volatility.BollingerBands(
+        df["close"], window=cfg.get("bb_period", 20), window_dev=cfg.get("bb_std", 2.0)
+    )
+    df["bb_upper"] = bb.bollinger_hband()
+    df["bb_lower"] = bb.bollinger_lband()
+    df["ema_filter"] = _ta.trend.EMAIndicator(
+        df["close"], window=cfg.get("ema_filter_period", 50)
+    ).ema_indicator()
     return df
 
 
 def get_signal(row, cfg: dict) -> str:
+    """RSI+BB + EMAトレンドフィルター でシグナルを返す"""
     if pd.isna(row.get("rsi")) or pd.isna(row.get("bb_lower")):
         return "hold"
-    if row["rsi"] < cfg.get("rsi_oversold", 30) and row["close"] < row["bb_lower"]:
+
+    oversold    = cfg.get("rsi_oversold",   25)
+    overbought  = cfg.get("rsi_overbought", 65)
+    use_filter  = cfg.get("use_ema_filter", True)
+    close       = row["close"]
+    ema         = row.get("ema_filter")
+
+    if row["rsi"] < oversold and close < row["bb_lower"]:
+        if use_filter and not pd.isna(ema) and close < ema:
+            return "hold"  # 下落トレンド中のBUY禁止
         return "buy"
-    if row["rsi"] > cfg.get("rsi_overbought", 70) and row["close"] > row["bb_upper"]:
+
+    if row["rsi"] > overbought and close > row["bb_upper"]:
+        if use_filter and not pd.isna(ema) and close > ema:
+            return "hold"  # 上昇トレンド中のSELL禁止
         return "sell"
+
     return "hold"
 
 
@@ -150,8 +154,8 @@ def get_signal(row, cfg: dict) -> str:
 def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000) -> dict:
     """バックテストを実行して結果dictを返す"""
     df = add_indicators(df, cfg)
-    sl       = cfg.get("stop_loss_pct",    0.02)
-    tp       = cfg.get("take_profit_pct",  0.04)
+    sl       = cfg.get("stop_loss_pct",    0.020)
+    tp       = cfg.get("take_profit_pct",  0.040)
     pos_pct  = cfg.get("position_size_pct", 0.05)
     maker    = cfg.get("maker_fee",  -0.0002)
     taker    = cfg.get("taker_fee",   0.0012)
@@ -168,7 +172,7 @@ def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000
 
         # ポジションあり → SL/TP確認
         if position:
-            ep = position["entry_price"]
+            ep   = position["entry_price"]
             side = position["side"]
             sl_hit = (price <= ep * (1-sl)) if side=="buy" else (price >= ep * (1+sl))
             tp_hit = (price >= ep * (1+tp)) if side=="buy" else (price <= ep * (1-tp))
@@ -254,12 +258,31 @@ def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000
 
 
 # ============================================================
-# 4. パラメータ最適化
+# 4. パラメータ最適化（multiprocessing 並列化）
 # ============================================================
 
+# ── ワーカー関数（トップレベルで定義 = pickle 可能）─────────
+def _optimize_worker(args: tuple) -> dict:
+    """
+    Pool.map() から呼ばれる1パターン分のバックテストワーカー。
+    args = (df, cfg_combo)
+    """
+    df, cfg_combo = args
+    result = run_backtest(df, cfg_combo)
+    score = (
+        result["win_rate"] * max(result["sharpe_ratio"], 0)
+        if result["total_trades"] >= 10
+        else -1
+    )
+    return {"cfg": cfg_combo, "result": result, "score": score}
+
+
 def optimize(df: pd.DataFrame, base_cfg: dict) -> dict:
-    """グリッドサーチで最適パラメータを探索"""
-    print("\n🔍 パラメータ最適化開始...")
+    """
+    グリッドサーチで最適パラメータを探索。
+    multiprocessing.Pool で全組み合わせを並列実行する。
+    """
+    print("\n🔍 パラメータ最適化開始（並列処理）...")
 
     grid = {
         "rsi_oversold":   [25, 30, 35],
@@ -270,42 +293,34 @@ def optimize(df: pd.DataFrame, base_cfg: dict) -> dict:
 
     keys   = list(grid.keys())
     combos = list(itertools.product(*grid.values()))
-    total  = len(combos)
-    print(f"  組み合わせ数: {total}パターン")
 
-    best_score = -999
-    best_cfg   = None
-    best_result = None
-    results    = []
-
-    for idx, combo in enumerate(combos):
+    # RSI閾値の矛盾パターンを事前除外
+    valid_combos = []
+    for combo in combos:
         cfg = base_cfg.copy()
         for k, v in zip(keys, combo):
             cfg[k] = v
+        if cfg["rsi_oversold"] < cfg["rsi_overbought"]:
+            valid_combos.append(cfg)
 
-        # 過最適化を防ぐためRSI閾値の矛盾を除外
-        if cfg["rsi_oversold"] >= cfg["rsi_overbought"]:
-            continue
+    total    = len(valid_combos)
+    n_procs  = min(cpu_count(), total, 8)   # 最大8プロセス
+    print(f"  組み合わせ数: {total}パターン / プロセス数: {n_procs}")
 
-        result = run_backtest(df, cfg)
-        # スコア：勝率×シャープレシオ（取引件数が少なすぎる場合はペナルティ）
-        if result["total_trades"] < 10:
-            score = -1
-        else:
-            score = result["win_rate"] * max(result["sharpe_ratio"], 0)
+    # (df, cfg) のペアを引数リストに変換
+    args_list = [(df, cfg) for cfg in valid_combos]
 
-        results.append({"cfg": cfg, "result": result, "score": score})
-
-        if score > best_score:
-            best_score  = score
-            best_cfg    = cfg
-            best_result = result
-
-        if (idx+1) % 10 == 0:
-            print(f"  {idx+1}/{total}パターン完了...", end="\r")
+    with Pool(processes=n_procs) as pool:
+        results = pool.map(_optimize_worker, args_list)
 
     results.sort(key=lambda x: -x["score"])
-    print(f"\n✅ 最適化完了")
+
+    best       = results[0]
+    best_cfg   = best["cfg"]
+    best_result= best["result"]
+    best_score = best["score"]
+
+    print(f"✅ 最適化完了")
     print(f"  最良スコア: {best_score:.4f}")
     print(f"  最良パラメータ: RSI={best_cfg['rsi_oversold']}/{best_cfg['rsi_overbought']} "
           f"SL={best_cfg['stop_loss_pct']*100:.1f}% TP={best_cfg['take_profit_pct']*100:.1f}%")
@@ -314,6 +329,66 @@ def optimize(df: pd.DataFrame, base_cfg: dict) -> dict:
           f"総損益: ¥{best_result['total_pnl']:+,.0f}")
 
     return {"best_cfg": best_cfg, "best_result": best_result, "all_results": results[:10]}
+
+
+# ── 複数ペア並列実行ワーカー ─────────────────────────────────
+def _pair_worker(args: tuple) -> dict:
+    """
+    複数ペアを並列バックテストするワーカー。
+    args = (pair, candle, days, cfg, do_optimize, do_update)
+    """
+    pair, candle, days, cfg, do_optimize, do_update = args
+    cfg = {**cfg, "_pair": pair}
+    pair_overrides = cfg.get("pair_params", {}).get(pair, {})
+    cfg = {**cfg, **pair_overrides}
+
+    df = fetch_ohlcv(pair, candle, days)
+    if df.empty:
+        return {"pair": pair, "error": "データ取得失敗"}
+
+    base_result = run_backtest(df, cfg)
+    opt_data = optimize(df, cfg) if do_optimize else None
+
+    report_path = write_report(pair, candle, days, base_result, opt_data, cfg)
+
+    if do_optimize and do_update and opt_data:
+        update_config(opt_data["best_cfg"])
+
+    return {
+        "pair":        pair,
+        "base_result": base_result,
+        "opt_data":    opt_data,
+        "report":      report_path,
+    }
+
+
+def run_all_pairs(pairs: list, candle: str, days: int, cfg: dict,
+                  do_optimize: bool = True, do_update: bool = False) -> list:
+    """
+    全ペアを並列バックテスト（ペア数分のプロセスを同時起動）。
+    """
+    n_procs = min(cpu_count(), len(pairs), 4)   # Docker では最大4並列
+    print(f"\n🚀 {len(pairs)}ペアを {n_procs}プロセス並列でバックテスト開始...")
+
+    args_list = [
+        (pair, candle, days, cfg, do_optimize, do_update)
+        for pair in pairs
+    ]
+
+    with Pool(processes=n_procs) as pool:
+        results = pool.map(_pair_worker, args_list)
+
+    print("\n📊 全ペア完了サマリー:")
+    print(f"{'ペア':12} {'勝率':>7} {'損益':>12} {'最大DD':>7}")
+    print("-" * 42)
+    for r in results:
+        if "error" in r:
+            print(f"{r['pair']:12} エラー: {r['error']}")
+        else:
+            br = r["base_result"]
+            print(f"{r['pair']:12} {br['win_rate']*100:6.1f}% "
+                  f"¥{br['total_pnl']:+10,.0f} {br['max_drawdown']*100:6.1f}%")
+    return results
 
 
 # ============================================================
@@ -410,16 +485,29 @@ def main():
     parser = argparse.ArgumentParser(description="bitbank バックテストエンジン")
     parser.add_argument("--pair",     default="xlm_jpy",  help="取引ペア")
     parser.add_argument("--days",     type=int, default=365, help="過去何日分")
-    parser.add_argument("--candle",   default="1min",     help="足種 (1min/5min/1hour)")
-    parser.add_argument("--optimize", action="store_true", help="パラメータ最適化を実行")
-    parser.add_argument("--update",   action="store_true", help="最適パラメータをconfig.yamlに反映")
+    parser.add_argument("--candle",    default="5min",      help="足種 (1min/5min/1hour)")
+    parser.add_argument("--optimize",  action="store_true", help="パラメータ最適化を実行（並列）")
+    parser.add_argument("--update",    action="store_true", help="最適パラメータをconfig.yamlに反映")
+    parser.add_argument("--all-pairs", action="store_true", help="config.yamlの全ペアを並列バックテスト")
     args = parser.parse_args()
 
     # config読み込み
     cfg_path = Path(__file__).parent.parent / "config.yaml"
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
+
+    # ── 全ペア並列モード ─────────────────────────────────────
+    if args.all_pairs:
+        pairs = cfg.get("pairs", [])
+        run_all_pairs(pairs, args.candle, args.days, cfg,
+                      do_optimize=args.optimize, do_update=args.update)
+        print("\n✅ 全ペアバックテスト完了！")
+        return
+
+    # ── 単一ペアモード ───────────────────────────────────────
     cfg["_pair"] = args.pair
+    pair_overrides = cfg.get("pair_params", {}).get(args.pair, {})
+    cfg = {**cfg, **pair_overrides}
 
     # データ取得
     df = fetch_ohlcv(args.pair, args.candle, args.days)
@@ -436,7 +524,7 @@ def main():
     print(f"  最大DD:   {base_result['max_drawdown']*100:.1f}%")
     print(f"  シャープ: {base_result['sharpe_ratio']:.2f}")
 
-    # 最適化
+    # 最適化（並列）
     opt_data = None
     if args.optimize:
         opt_data = optimize(df, cfg)

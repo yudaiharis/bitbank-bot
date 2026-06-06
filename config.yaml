@@ -1,39 +1,110 @@
+mode: paper
+
+# ── トレード対象ペア（5分足バックテスト上位7ペア）─────────────────
+# 除外: btc_jpy(+¥10K), eth_jpy(+¥9K), doge_jpy(+¥2K)
+pairs:
+  - xlm_jpy    # +¥93K / DD 1.8% 🥇
+  - ada_jpy    # +¥62K / DD 1.9%
+  - link_jpy   # +¥57K / DD 3.8%
+  - sol_jpy    # +¥33K / DD 2.4%
+  - avax_jpy   # +¥24K / DD 3.4%
+  - dot_jpy    # +¥22K / DD 3.9%
+  - xrp_jpy    # +¥19K / DD 2.5%
+
+excluded_pairs: []  # 自律改善で追加される
+
+# ── ペア別最適パラメータ（5分足バックテスト最適化済み）────────────
+pair_params:
+  xlm_jpy:
+    rsi_oversold: 25
+    rsi_overbought: 65
+    stop_loss_pct: 0.025
+    take_profit_pct: 0.040
+  ada_jpy:
+    rsi_oversold: 25
+    rsi_overbought: 65
+    stop_loss_pct: 0.020
+    take_profit_pct: 0.040
+  link_jpy:
+    rsi_oversold: 35
+    rsi_overbought: 70
+    stop_loss_pct: 0.020
+    take_profit_pct: 0.050
+  sol_jpy:
+    rsi_oversold: 25
+    rsi_overbought: 75
+    stop_loss_pct: 0.025
+    take_profit_pct: 0.050
+  avax_jpy:
+    rsi_oversold: 30
+    rsi_overbought: 65
+    stop_loss_pct: 0.010
+    take_profit_pct: 0.050
+  dot_jpy:
+    rsi_oversold: 30
+    rsi_overbought: 65
+    stop_loss_pct: 0.025
+    take_profit_pct: 0.040
+  xrp_jpy:
+    rsi_oversold: 25
+    rsi_overbought: 65
+    stop_loss_pct: 0.025
+    take_profit_pct: 0.050
+
+# ── 共通フォールバックパラメータ（pair_params未設定時に使用）──────
+rsi_period: 14
+rsi_oversold: 25
+rsi_overbought: 65
 bb_period: 20
 bb_std: 2.0
-excluded_pairs: []
-initial_balance_jpy: 1000000
-maker_fee: -0.0002
-max_loops: 5
-min_hold_minutes: 30
-min_volume_jpy: 10000000
-mode: paper
-pairs:
-- btc_jpy
-- xrp_jpy
-- eth_jpy
-- sol_jpy
-- doge_jpy
-- ada_jpy
-- avax_jpy
-- link_jpy
-- dot_jpy
-- xlm_jpy
-pdca_loop: 1
-position_size_pct: 0.05
-rsi_overbought: 70
-rsi_oversold: 30
-rsi_period: 14
-scan_interval_sec: 900
-stop_loss_pct: 0.02
+stop_loss_pct: 0.020
+take_profit_pct: 0.040
 strategy: rsi_bb
-switch_threshold: 0.2
-take_profit_pct: 0.04
-taker_fee: 0.0012
-target_consecutive: 3
-target_max_drawdown: 0.1
+candle_type: 5min
+
+# ── トレンドフィルター（連続SL防止） ────────────────────────
+use_ema_filter: true           # EMAフィルター: トレンド逆行エントリーを禁止
+ema_filter_period: 200         # フィルター用EMA期間（5min×200=約16時間、長期トレンド判定）
+
+# ── 連続SLクールダウン ────────────────────────────────────
+max_consecutive_sl: 3          # 連続SLがこの件数に達したらクールダウン
+sl_cooldown_minutes: 60        # クールダウン時間（分）
+
+# ── 含み損上限（ポートフォリオリスク管理） ─────────────────
+max_unrealized_loss_pct: 0.05  # 全ポジション含み損合計が残高の5%超でエントリー停止
+
+# ── 高相関ペアグループ（同方向の重複エントリー禁止） ────────
+# 同一グループ内で同方向のポジションが既に存在する場合、新規エントリーをブロック
+correlation_groups:
+  - [xlm_jpy, ada_jpy]         # アルトコインA群（高相関）
+  - [sol_jpy, avax_jpy]        # アルトコインB群（高相関）
+  - [link_jpy, dot_jpy]        # アルトコインC群（高相関）
+
+# ── 資金管理 ─────────────────────────────────────────────────────
+initial_balance_jpy: 1000000
+position_size_pct: 0.05          # 1ポジションあたり残高の5%
+max_simultaneous_positions: 4    # 同時保有ポジション数の上限
+
+# ── スキャナー設定 ──────────────────────────────────────────────
+scan_interval_sec: 900
+trade_interval_sec: 300
+min_volume_jpy: 10000000
+switch_threshold: 0.20
+min_hold_minutes: 30
+
+# ── PDCAループ管理 ──────────────────────────────────────────────
+pdca_loop: 1
 target_win_rate: 0.55
-trade_interval_sec: 180
+target_max_drawdown: 0.10
+target_consecutive: 3
+max_loops: 5
 trades_per_loop: 50
+
+# ── ボラティリティスコア重み ────────────────────────────────────
 vol_weight_atr: 0.5
-vol_weight_range: 0.2
 vol_weight_volume: 0.3
+vol_weight_range: 0.2
+
+# ── 手数料 ──────────────────────────────────────────────────────
+maker_fee: -0.0002
+taker_fee: 0.0012

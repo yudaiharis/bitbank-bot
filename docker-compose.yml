@@ -1,0 +1,44 @@
+services:
+  # Webダッシュボード（常時起動）
+  web:
+    build: .
+    command: python monitor/web_dashboard.py
+    ports:
+      - "8080:5000"
+    volumes:
+      - ./trades.db:/app/trades.db
+      - ./reports:/app/reports
+      - ./config.yaml:/app/config.yaml
+    restart: unless-stopped
+
+  # バックテスト（手動実行用: docker compose run backtest）
+  backtest:
+    build: .
+    command: >
+      python backtest/engine.py
+      --pair ${PAIR:-btc_jpy}
+      --days ${DAYS:-365}
+      --candle ${CANDLE:-1hour}
+      ${OPTIMIZE:+--optimize}
+      ${UPDATE:+--update}
+    volumes:
+      - ./reports:/app/reports
+      - ./backtest/data:/app/backtest/data
+      - ./config.yaml:/app/config.yaml
+    profiles:
+      - backtest
+
+  # ペーパートレード（手動実行用: docker compose run paper）
+  paper:
+    build: .
+    command: python main.py --mode paper
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./trades.db:/app/trades.db
+      - ./reports:/app/reports
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    profiles:
+      - paper

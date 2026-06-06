@@ -21,22 +21,26 @@ def make_dashboard(state: dict) -> Layout:
         Layout(name="right"),
     )
 
-    # ヘッダー
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # ── ヘッダー ─────────────────────────────────────────────
+    now  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     loop = state.get("loop_num", 1)
     mode = state.get("mode", "paper").upper()
+    open_pos = len(state.get("positions", {}))
     layout["header"].update(Panel(
-        f"[bold]bitbank ペーパートレードbot[/bold]  [{now}]  Loop {loop}  Mode: {mode}",
+        f"[bold]bitbank ペーパートレードbot[/bold]  [{now}]  "
+        f"Loop {loop}  Mode: {mode}  "
+        f"[cyan]ポジション: {open_pos}[/cyan]",
         style="blue"
     ))
 
-    # 左パネル: スキャナー上位3銘柄
+    # ── 左パネル: スキャナー上位3銘柄 ────────────────────────
     scan_table = Table(title="ボラティリティ TOP3", show_header=True, header_style="bold cyan")
     scan_table.add_column("ペア", width=12)
     scan_table.add_column("スコア", justify="right")
     scan_table.add_column("価格", justify="right")
     for r in state.get("ranked", [])[:3]:
-        mark = " ◀" if r["pair"] == state.get("active_pair") else ""
+        has_pos = r["pair"] in state.get("positions", {})
+        mark = " 🔵" if has_pos else ""
         scan_table.add_row(
             r["pair"] + mark,
             f"{r['score']:.4f}",
@@ -44,22 +48,24 @@ def make_dashboard(state: dict) -> Layout:
         )
     layout["left"].update(Panel(scan_table, title="スキャナー"))
 
-    # 右パネル: ポジション＋統計
-    pos = state.get("position")
-    pos_text = Text()
-    if pos:
-        price_now = state.get("current_price", 0)
-        unreal = (price_now - pos["entry_price"]) / pos["entry_price"] * 100
-        if pos["side"] == "sell":
-            unreal = -unreal
-        color = "green" if unreal >= 0 else "red"
-        pos_text.append(f"ペア: {pos['pair']}\n")
-        pos_text.append(f"方向: {pos['side'].upper()}\n")
-        pos_text.append(f"エントリー: {pos['entry_price']:,.0f}\n")
-        pos_text.append(f"含み損益: ", style="bold")
-        pos_text.append(f"{unreal:+.2f}%\n", style=color)
+    # ── 右パネル: 複数ポジション一覧 ＋ 統計 ─────────────────
+    positions = state.get("positions", {})
+
+    pos_table = Table(show_header=True, header_style="bold green", box=None, padding=(0, 1))
+    pos_table.add_column("ペア",       width=10)
+    pos_table.add_column("方向",       width=5)
+    pos_table.add_column("エントリー", justify="right", width=12)
+
+    if positions:
+        for pair, pos in positions.items():
+            side_color = "green" if pos["side"] == "buy" else "red"
+            pos_table.add_row(
+                pair,
+                f"[{side_color}]{pos['side'].upper()}[/{side_color}]",
+                f"¥{pos['entry_price']:,.0f}",
+            )
     else:
-        pos_text.append("ポジションなし", style="dim")
+        pos_table.add_row("[dim]ポジションなし[/dim]", "", "")
 
     stats = state.get("stats", {})
     stats_text = (
@@ -68,14 +74,23 @@ def make_dashboard(state: dict) -> Layout:
         f"勝率: {stats.get('win_rate', 0)*100:.1f}%\n"
         f"総損益: ¥{stats.get('total_pnl', 0):+,.0f}\n"
         f"最大DD: {stats.get('max_dd', 0)*100:.1f}%\n"
-        f"銘柄切替: {stats.get('switches', 0)}回"
+        f"同時保有: {stats.get('open_positions', 0)}件"
     )
+
+    right_content = Text()
+    right_content.append(stats_text)
+
     layout["right"].update(Panel(
-        f"{pos_text}\n{stats_text}",
-        title="ポジション / 統計"
+        f"{right_content}\n",
+        title="統計",
+    ))
+    # ポジションテーブルを左パネル下部に追加
+    layout["left"].update(Panel(
+        f"{scan_table}\n{pos_table}",
+        title="スキャナー / ポジション"
     ))
 
-    # フッター
+    # ── フッター ─────────────────────────────────────────────
     last_action = state.get("last_action", "待機中...")
     layout["footer"].update(Panel(f"最終アクション: {last_action}", style="dim"))
 

@@ -4,3 +4,5 @@ __pycache__/
 .env
 trades.db
 reports/
+venv/
+backtest/data/

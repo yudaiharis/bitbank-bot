@@ -16,7 +16,10 @@ from flask import Flask, jsonify, send_file, Response
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 app = Flask(__name__)
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "trades.db")
+DB_PATH = os.environ.get(
+    "TRADES_DB",
+    os.path.join(os.path.dirname(__file__), "..", "trades.db")
+)
 
 
 def get_conn():
@@ -93,6 +96,10 @@ canvas{max-height:220px}
   <span id="ts">読み込み中...</span>
 </header>
 <div class="container">
+  <div class="panel" style="margin-bottom:20px">
+    <h2>現在のトレード戦略</h2>
+    <div id="strategy-panel" style="font-size:13px;color:#94a3b8;line-height:2">読み込み中...</div>
+  </div>
   <div class="cards" id="cards">
     <div class="card"><div class="label">仮想残高</div><div class="value blue" id="balance">-</div></div>
     <div class="card"><div class="label">総損益</div><div class="value" id="pnl">-</div></div>
@@ -116,13 +123,18 @@ canvas{max-height:220px}
     </div>
   </div>
   <div class="panel">
-    <h2>直近20件のトレード</h2>
-    <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>時刻(JST)</th><th>Loop</th><th>ペア</th><th>方向</th><th>売買金額</th><th>エントリー</th><th>決済</th><th>損益</th></tr></thead>
-        <tbody id="tradelist"></tbody>
-      </table>
-    </div>
+    <details id="trade-details">
+      <summary style="list-style:none;display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
+        <h2 style="margin:0">直近20件のトレード</h2>
+        <span id="trade-summary-badge" style="font-size:12px;color:#60a5fa">▶ 表示する</span>
+      </summary>
+      <div style="overflow-x:auto;margin-top:14px">
+        <table>
+          <thead><tr><th>時刻(JST)</th><th>Loop</th><th>ペア</th><th>方向</th><th>売買金額</th><th>エントリー</th><th>決済</th><th>損益</th></tr></thead>
+          <tbody id="tradelist"></tbody>
+        </table>
+      </div>
+    </details>
   </div>
   <div class="panel" style="margin-bottom:20px">
     <h2>AI分析 <span style="font-size:11px;font-weight:400;color:#475569">自動（毎週日曜2時）または手動実行</span></h2>
@@ -140,10 +152,6 @@ canvas{max-height:220px}
       <a href="/download/config" style="display:inline-block;font-size:13px;padding:7px 14px;background:#1e2235;border:1px solid #2d3148;border-radius:6px;color:#60a5fa;text-decoration:none">config.yaml ダウンロード</a>
       <a id="dl-final" href="/download/final" style="display:none;font-size:13px;padding:7px 14px;background:#14532d;border:1px solid #166534;border-radius:6px;color:#34d399;text-decoration:none">最終レポート ダウンロード</a>
     </div>
-  </div>
-  <div class="panel" style="margin-bottom:20px">
-    <h2>現在のトレード戦略</h2>
-    <div id="strategy-panel" style="font-size:13px;color:#94a3b8;line-height:2">読み込み中...</div>
   </div>
   <div class="footer">30秒ごとに自動更新 &nbsp;|&nbsp; bitbank Public API</div>
 </div>
@@ -274,16 +282,27 @@ async function load() {
       chart.update('none');
     }
 
-    // スキャナー
+    // スキャナー（ヘッダー付きテーブル）
     const sc = document.getElementById('scanner');
     if (d.scanner && d.scanner.length) {
-      sc.innerHTML = d.scanner.map(r =>
-        `<div class="scanner-row">
-          <span class="pair ${r.active ? 'active' : ''}">${r.pair}${r.active ? ' ◀' : ''}</span>
-          <span class="score">${Number(r.score).toFixed(4)}</span>
-          <span class="price">¥${Number(r.last).toLocaleString()}</span>
-        </div>`
-      ).join('');
+      sc.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="border-bottom:1px solid #2d3148">
+              <th style="text-align:left;padding:5px 4px;color:#64748b">ペア</th>
+              <th style="padding:5px 4px;color:#64748b;text-align:right" title="ATR比率・出来高・値幅の加重合成スコア">ボラスコア</th>
+              <th style="padding:5px 4px;color:#64748b;text-align:right">現在価格</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${d.scanner.map(r => `
+              <tr style="border-bottom:1px solid #1e2235">
+                <td style="padding:6px 4px;font-weight:500;${r.active ? 'color:#34d399' : 'color:#e2e8f0'}">${r.pair}${r.active ? ' 🔵' : ''}</td>
+                <td style="padding:6px 4px;text-align:right;color:#a78bfa">${Number(r.score).toFixed(4)}</td>
+                <td style="padding:6px 4px;text-align:right;color:#e2e8f0">¥${Number(r.last).toLocaleString()}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
     } else {
       sc.innerHTML = '<div style="color:#475569;font-size:13px;padding:8px 0">スキャン待機中...</div>';
     }
@@ -303,6 +322,14 @@ async function load() {
     }
 
     // トレード履歴（UTC→JST変換・売買金額追加・理由列削除）
+    const tradeCount = d.recent_trades.length;
+    const badge = document.getElementById('trade-summary-badge');
+    const det = document.getElementById('trade-details');
+    if (badge) {
+      badge.textContent = det && det.open
+        ? `▼ 非表示にする（${tradeCount}件）`
+        : `▶ 表示する（${tradeCount}件）`;
+    }
     const tbody = document.getElementById('tradelist');
     tbody.innerHTML = d.recent_trades.map(t => {
       const pnl = t.pnl ?? 0;
@@ -326,29 +353,73 @@ async function load() {
       </tr>`;
     }).join('');
 
-    // ストラテジー表示
+    // ストラテジー表示（マルチペア・ペア別パラメータ対応）
     if (d.strategy) {
       const sp = document.getElementById('strategy-panel');
       const s = d.strategy;
+      const pairRows = (s.pair_params_list || []).map(p => `
+        <tr>
+          <td style="color:#e2e8f0;font-weight:500;padding:5px 6px">${p.pair}</td>
+          <td style="color:#94a3b8;padding:5px 6px;text-align:center">RSI &lt; ${p.rsi_oversold}</td>
+          <td style="color:#94a3b8;padding:5px 6px;text-align:center">RSI &gt; ${p.rsi_overbought}</td>
+          <td style="color:#f87171;padding:5px 6px;text-align:center">-${(p.stop_loss_pct*100).toFixed(1)}%</td>
+          <td style="color:#34d399;padding:5px 6px;text-align:center">+${(p.take_profit_pct*100).toFixed(1)}%</td>
+        </tr>`).join('');
       sp.innerHTML = `
-        <ul style="list-style:none;padding:0;margin:0">
-          <li>📌 <b>対象銘柄</b>：${s.active_pair}（ボラティリティスコア上位から自動選択・${s.scan_interval_min}分ごとに再スキャン）</li>
-          <li>📐 <b>シグナル条件</b>：RSI(${s.rsi_period}) &lt; ${s.rsi_oversold} かつ 価格 &lt; ボリンジャーバンド下限 → <span style="color:#34d399">買い</span></li>
-          <li style="margin-left:1.5em">RSI(${s.rsi_period}) &gt; ${s.rsi_overbought} かつ 価格 &gt; ボリンジャーバンド上限 → <span style="color:#f87171">売り</span></li>
-          <li>📊 <b>ボリンジャーバンド</b>：期間 ${s.bb_period}・標準偏差 ${s.bb_std}σ</li>
-          <li>💰 <b>1回の発注額</b>：残高の ${(s.position_size_pct*100).toFixed(0)}%（現在 ¥${Math.round(s.order_size).toLocaleString()} 相当）</li>
-          <li>🛑 <b>ストップロス</b>：エントリーから -${(s.stop_loss_pct*100).toFixed(1)}%（損失限定）</li>
-          <li>🎯 <b>テイクプロフィット</b>：エントリーから +${(s.take_profit_pct*100).toFixed(1)}%（利益確定）</li>
-          <li>💸 <b>手数料</b>：Maker ${s.maker_fee}%（受取）/ Taker +${s.taker_fee}%（支払）・スプレッドも計上</li>
-          <li>🔄 <b>PDCAサイクル</b>：${s.trades_per_loop}件ごとに自動分析・毎週日曜11時(JST)にClaude Codeが戦略改善</li>
-          <li>🎯 <b>目標</b>：勝率 ${(s.target_win_rate*100).toFixed(0)}%以上 かつ 最大DD ${(s.target_max_drawdown*100).toFixed(0)}%以内を${s.target_consecutive}連続達成</li>
-        </ul>`;
+        <div style="background:#0f1117;border-left:3px solid #a78bfa;padding:8px 12px;margin-bottom:14px;border-radius:0 6px 6px 0">
+          🎯 <b style="color:#a78bfa">目標</b>：勝率 <b>${(s.target_win_rate*100).toFixed(0)}%以上</b> かつ 最大DD <b>${(s.target_max_drawdown*100).toFixed(0)}%以内</b> を <b>${s.target_consecutive}連続達成</b>（最大${s.trades_per_loop}件/ループ × PDCAで自動改善）
+        </div>
+        <ul style="list-style:none;padding:0;margin:0 0 14px 0">
+          <li>📌 <b>対象銘柄</b>：${(s.pairs||[]).join(' / ')}（計${(s.pairs||[]).length}ペア・btc/eth/doge除外済み）</li>
+          <li>🔀 <b>同時保有上限</b>：最大 <b>${s.max_simultaneous}</b> ポジション（全ペアを${s.trade_interval_sec}秒ごとに並列チェック）</li>
+          <li>🕐 <b>足種</b>：<b>${s.candle_type}</b>（${s.scan_interval_min}分ごとにボラティリティ再スキャン）</li>
+          <li>📐 <b>シグナル条件</b>：RSI(${s.rsi_period}) + ボリンジャーバンド（${s.bb_period}期間 ${s.bb_std}σ）逆張り戦略</li>
+          <li style="margin-left:1.5em"><span style="color:#34d399">買い</span>：RSI &lt; 閾値 かつ 価格 &lt; BB下限（売られすぎ）</li>
+          <li style="margin-left:1.5em"><span style="color:#f87171">売り</span>：RSI &gt; 閾値 かつ 価格 &gt; BB上限（買われすぎ）</li>
+          <li>💰 <b>1ポジションあたり</b>：残高の ${(s.position_size_pct*100).toFixed(0)}%（現在 ¥${Math.round(s.order_size).toLocaleString()} 相当）</li>
+          <li>💸 <b>手数料</b>：Maker ${s.maker_fee}%（受取）/ Taker +${s.taker_fee}%（支払）</li>
+        </ul>
+        <details id="pair-params-details" style="cursor:pointer">
+          <summary style="font-size:12px;color:#60a5fa;padding:6px 0;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">
+            <span class="pp-arrow" style="font-size:10px">▶</span>
+            ペア別パラメータを表示（5分足バックテスト最適化済み）
+          </summary>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
+            <thead>
+              <tr style="border-bottom:1px solid #2d3148">
+                <th style="text-align:left;padding:5px 6px;color:#64748b">ペア</th>
+                <th style="padding:5px 6px;color:#64748b">RSI買い</th>
+                <th style="padding:5px 6px;color:#64748b">RSI売り</th>
+                <th style="padding:5px 6px;color:#64748b">SL</th>
+                <th style="padding:5px 6px;color:#64748b">TP</th>
+              </tr>
+            </thead>
+            <tbody>${pairRows}</tbody>
+          </table>
+        </details>`;
     }
 
   } catch(e) {
     console.error(e);
   }
 }
+
+// アコーディオン toggle（ペア別パラメータ・トレード履歴）
+document.addEventListener('toggle', function(e) {
+  // ペア別パラメータの矢印
+  if (e.target.id === 'pair-params-details') {
+    var arrow = e.target.querySelector('.pp-arrow');
+    if (arrow) arrow.textContent = e.target.open ? '▼' : '▶';
+  }
+  // トレード履歴のバッジ
+  if (e.target.id === 'trade-details') {
+    var badge = document.getElementById('trade-summary-badge');
+    var count = document.getElementById('tradelist') ? document.getElementById('tradelist').rows.length : 0;
+    if (badge) badge.textContent = e.target.open
+      ? '▼ 非表示にする（' + count + '件）'
+      : '▶ 表示する（' + count + '件）';
+  }
+}, true);
 
 load();
 loadReports();
@@ -565,27 +636,42 @@ def stats():
         if s["pair"] == active_pair:
             s["active"] = True
 
-    # ストラテジー情報
+    # ストラテジー情報（マルチペア・ペア別パラメータ対応）
     current_balance = round(last_balance)
     order_size = current_balance * cfg.get("position_size_pct", 0.05)
+    pair_params = cfg.get("pair_params", {})
+    pairs = cfg.get("pairs", [])
+
+    # ペア別パラメータをリスト化（表示用）
+    pair_params_list = []
+    for p in pairs:
+        overrides = pair_params.get(p, {})
+        pair_params_list.append({
+            "pair":           p,
+            "rsi_oversold":   overrides.get("rsi_oversold",   cfg.get("rsi_oversold",   25)),
+            "rsi_overbought": overrides.get("rsi_overbought", cfg.get("rsi_overbought", 65)),
+            "stop_loss_pct":  overrides.get("stop_loss_pct",  cfg.get("stop_loss_pct",  0.020)),
+            "take_profit_pct":overrides.get("take_profit_pct",cfg.get("take_profit_pct",0.040)),
+        })
+
     strategy = {
-        "active_pair":        active_pair,
-        "scan_interval_min":  cfg.get("scan_interval_sec", 900) // 60,
-        "rsi_period":         cfg.get("rsi_period", 14),
-        "rsi_oversold":       cfg.get("rsi_oversold", 30),
-        "rsi_overbought":     cfg.get("rsi_overbought", 70),
-        "bb_period":          cfg.get("bb_period", 20),
-        "bb_std":             cfg.get("bb_std", 2.0),
-        "position_size_pct":  cfg.get("position_size_pct", 0.05),
-        "order_size":         order_size,
-        "stop_loss_pct":      cfg.get("stop_loss_pct", 0.02),
-        "take_profit_pct":    cfg.get("take_profit_pct", 0.04),
-        "maker_fee":          cfg.get("maker_fee", -0.0002) * 100,
-        "taker_fee":          cfg.get("taker_fee", 0.0012) * 100,
-        "trades_per_loop":    cfg.get("trades_per_loop", 50),
-        "target_win_rate":    cfg.get("target_win_rate", 0.55),
-        "target_max_drawdown": cfg.get("target_max_drawdown", 0.10),
-        "target_consecutive": cfg.get("target_consecutive", 3),
+        "pairs":                   pairs,
+        "pair_params_list":        pair_params_list,
+        "max_simultaneous":        cfg.get("max_simultaneous_positions", 4),
+        "candle_type":             cfg.get("candle_type", "5min"),
+        "scan_interval_min":       cfg.get("scan_interval_sec", 900) // 60,
+        "trade_interval_sec":      cfg.get("trade_interval_sec", 300),
+        "rsi_period":              cfg.get("rsi_period", 14),
+        "bb_period":               cfg.get("bb_period", 20),
+        "bb_std":                  cfg.get("bb_std", 2.0),
+        "position_size_pct":       cfg.get("position_size_pct", 0.05),
+        "order_size":              order_size,
+        "maker_fee":               cfg.get("maker_fee", -0.0002) * 100,
+        "taker_fee":               cfg.get("taker_fee", 0.0012) * 100,
+        "trades_per_loop":         cfg.get("trades_per_loop", 50),
+        "target_win_rate":         cfg.get("target_win_rate", 0.55),
+        "target_max_drawdown":     cfg.get("target_max_drawdown", 0.10),
+        "target_consecutive":      cfg.get("target_consecutive", 3),
     }
 
     return jsonify({
@@ -607,275 +693,4 @@ def stats():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, threaded=False, debug=False)
-
-
-# ============================================================
-# 損益グラフ専用ページ
-# ============================================================
-CHART_HTML = """<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="60">
-<title>損益グラフ | bitbank bot</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0}
-header{background:#1a1d2e;border-bottom:1px solid #2d3148;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
-header h1{font-size:15px;font-weight:600;color:#a78bfa}
-header a{font-size:12px;color:#60a5fa;text-decoration:none}
-.container{max-width:900px;margin:0 auto;padding:16px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
-.card{background:#1a1d2e;border:1px solid #2d3148;border-radius:10px;padding:14px}
-.card .label{font-size:11px;color:#64748b;margin-bottom:4px;text-transform:uppercase}
-.card .value{font-size:20px;font-weight:600}
-.green{color:#34d399}.red{color:#f87171}.blue{color:#60a5fa}.purple{color:#a78bfa}
-.panel{background:#1a1d2e;border:1px solid #2d3148;border-radius:10px;padding:16px;margin-bottom:16px}
-.panel h2{font-size:13px;font-weight:600;color:#94a3b8;margin-bottom:14px;text-transform:uppercase}
-canvas{width:100%!important}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:left;padding:6px;color:#64748b;border-bottom:1px solid #2d3148}
-td{padding:6px;border-bottom:1px solid #1e2235;font-variant-numeric:tabular-nums}
-.footer{text-align:center;font-size:11px;color:#334155;padding:12px 0 24px}
-</style>
-</head>
-<body>
-<header>
-  <h1>損益グラフ</h1>
-  <div style="display:flex;gap:16px;align-items:center">
-    <span id="ts" style="font-size:12px;color:#64748b"></span>
-    <a href="/">← ダッシュボードに戻る</a>
-  </div>
-</header>
-<div class="container">
-  <div class="cards">
-    <div class="card"><div class="label">開始残高</div><div class="value blue" id="initial">¥1,000,000</div></div>
-    <div class="card"><div class="label">現在残高</div><div class="value blue" id="balance">-</div></div>
-    <div class="card"><div class="label">総損益</div><div class="value" id="pnl">-</div></div>
-    <div class="card"><div class="label">損益率</div><div class="value" id="pnl_pct">-</div></div>
-    <div class="card"><div class="label">勝率</div><div class="value purple" id="winrate">-</div></div>
-    <div class="card"><div class="label">最大DD</div><div class="value" id="maxdd">-</div></div>
-    <div class="card"><div class="label">総手数料</div><div class="value" id="total_fee">-</div></div>
-    <div class="card"><div class="label">取引件数</div><div class="value blue" id="trades">-</div></div>
-  </div>
-
-  <div class="panel">
-    <h2>資産推移（開始: ¥1,000,000）</h2>
-    <canvas id="balance-chart" height="280"></canvas>
-  </div>
-
-  <div class="panel">
-    <h2>トレード別損益</h2>
-    <canvas id="pnl-chart" height="200"></canvas>
-  </div>
-
-  <div class="panel">
-    <h2>コスト内訳（累計）</h2>
-    <canvas id="cost-chart" height="180"></canvas>
-  </div>
-
-  <div class="panel">
-    <h2>取引履歴（直近50件）</h2>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr>
-        <th>時刻</th><th>ペア</th><th>方向</th>
-        <th>エントリー</th><th>決済</th><th>損益</th><th>手数料</th><th>理由</th>
-      </tr></thead>
-      <tbody id="trade-table"></tbody>
-    </table>
-    </div>
-  </div>
-  <div class="footer">60秒ごとに自動更新</div>
-</div>
-<script>
-let balChart = null, pnlChart = null, costChart = null;
-
-async function load() {
-  const r = await fetch('/api/chart_data');
-  const d = await r.json();
-  document.getElementById('ts').textContent = d.updated_at;
-
-  const init = d.initial_balance;
-  const bal  = d.balance;
-  const pnl  = bal - init;
-  const pct  = (pnl / init * 100);
-
-  document.getElementById('initial').textContent  = '¥' + init.toLocaleString();
-  document.getElementById('balance').textContent   = '¥' + Math.round(bal).toLocaleString();
-
-  const pnlEl = document.getElementById('pnl');
-  pnlEl.textContent = (pnl>=0?'+':'') + '¥' + Math.round(pnl).toLocaleString();
-  pnlEl.className = 'value ' + (pnl>=0?'green':'red');
-
-  const pctEl = document.getElementById('pnl_pct');
-  pctEl.textContent = (pct>=0?'+':'') + pct.toFixed(2) + '%';
-  pctEl.className = 'value ' + (pct>=0?'green':'red');
-
-  document.getElementById('winrate').textContent   = (d.win_rate*100).toFixed(1) + '%';
-  const ddEl = document.getElementById('maxdd');
-  ddEl.textContent = (d.max_drawdown*100).toFixed(1) + '%';
-  ddEl.className = 'value ' + (d.max_drawdown>0.08?'red':'green');
-  document.getElementById('total_fee').textContent = '¥' + Math.round(d.total_fee).toLocaleString();
-  document.getElementById('trades').textContent    = d.total_trades;
-
-  // 資産推移グラフ
-  const bLabels = d.balance_series.map(p=>p.t);
-  const bVals   = d.balance_series.map(p=>p.b);
-  if (!balChart) {
-    balChart = new Chart(document.getElementById('balance-chart').getContext('2d'), {
-      type:'line',
-      data:{labels:bLabels, datasets:[
-        {label:'残高', data:bVals, borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,0.08)', borderWidth:2, pointRadius:0, fill:true, tension:0.3},
-        {label:'開始残高', data:bLabels.map(()=>init), borderColor:'#475569', borderWidth:1, borderDash:[4,4], pointRadius:0, fill:false},
-      ]},
-      options:{responsive:true, plugins:{legend:{labels:{color:'#94a3b8',font:{size:12}}}},
-        scales:{x:{ticks:{color:'#475569',maxTicksLimit:8},grid:{color:'#1e2235'}},
-                y:{ticks:{color:'#475569',callback:v=>'¥'+v.toLocaleString()},grid:{color:'#1e2235'}}}}
-    });
-  } else {
-    balChart.data.labels = bLabels;
-    balChart.data.datasets[0].data = bVals;
-    balChart.data.datasets[1].data = bLabels.map(()=>init);
-    balChart.update('none');
-  }
-
-  // トレード別損益棒グラフ
-  const pLabels = d.trade_pnls.map((_,i)=>'#'+(i+1));
-  const pVals   = d.trade_pnls.map(p=>p.pnl);
-  const pColors = pVals.map(v=>v>=0?'rgba(52,211,153,0.7)':'rgba(248,113,113,0.7)');
-  if (!pnlChart) {
-    pnlChart = new Chart(document.getElementById('pnl-chart').getContext('2d'), {
-      type:'bar',
-      data:{labels:pLabels, datasets:[{label:'損益(円)', data:pVals, backgroundColor:pColors, borderWidth:0}]},
-      options:{responsive:true, plugins:{legend:{display:false}},
-        scales:{x:{ticks:{color:'#475569'},grid:{color:'#1e2235'}},
-                y:{ticks:{color:'#475569',callback:v=>(v>=0?'+':'')+v.toLocaleString()},grid:{color:'#1e2235'}}}}
-    });
-  } else {
-    pnlChart.data.labels = pLabels;
-    pnlChart.data.datasets[0].data = pVals;
-    pnlChart.data.datasets[0].backgroundColor = pColors;
-    pnlChart.update('none');
-  }
-
-  // コスト内訳グラフ
-  if (!costChart) {
-    costChart = new Chart(document.getElementById('cost-chart').getContext('2d'), {
-      type:'doughnut',
-      data:{
-        labels:['Maker受取（+）','Taker手数料','スプレッドコスト'],
-        datasets:[{
-          data:[
-            Math.abs(d.cost_breakdown.maker_rebate),
-            d.cost_breakdown.taker_fee,
-            d.cost_breakdown.spread_cost
-          ],
-          backgroundColor:['rgba(52,211,153,0.7)','rgba(248,113,113,0.7)','rgba(251,191,36,0.7)'],
-          borderWidth:0,
-        }]
-      },
-      options:{responsive:true,plugins:{legend:{labels:{color:'#94a3b8',font:{size:12}}}}}
-    });
-  } else {
-    costChart.data.datasets[0].data = [
-      Math.abs(d.cost_breakdown.maker_rebate),
-      d.cost_breakdown.taker_fee,
-      d.cost_breakdown.spread_cost,
-    ];
-    costChart.update('none');
-  }
-
-  // 取引履歴テーブル
-  const tbody = document.getElementById('trade-table');
-  tbody.innerHTML = d.recent_trades.map(t=>{
-    const pnl = t.pnl ?? 0;
-    const ts  = (t.timestamp||'').substring(0,16).replace('T',' ');
-    return `<tr>
-      <td>${ts}</td><td>${t.pair}</td>
-      <td style="color:${t.side==='buy'?'#34d399':'#f87171'}">${t.side.toUpperCase()}</td>
-      <td>¥${Math.round(t.entry_price).toLocaleString()}</td>
-      <td>${t.exit_price?'¥'+Math.round(t.exit_price).toLocaleString():'保有中'}</td>
-      <td style="color:${pnl>=0?'#34d399':'#f87171'}">${t.status==='open'?'-':(pnl>=0?'+':'')+'¥'+Math.round(pnl).toLocaleString()}</td>
-      <td style="color:#64748b">${t.fee?'¥'+Math.round(t.fee).toLocaleString():'-'}</td>
-      <td style="color:#64748b">${t.reason||'-'}</td>
-    </tr>`;
-  }).join('');
-}
-
-load();
-setInterval(load, 60000);
-</script>
-</body>
-</html>"""
-
-
-@app.route("/chart")
-def chart_page():
-    return CHART_HTML
-
-
-@app.route("/api/chart_data")
-def chart_data():
-    import yaml
-    cfg_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
-    cfg = {}
-    if os.path.exists(cfg_path):
-        with open(cfg_path) as f:
-            cfg = yaml.safe_load(f) or {}
-
-    initial = cfg.get("initial_balance_jpy", 1_000_000)
-    trades  = query("SELECT * FROM trades WHERE status='closed' ORDER BY timestamp")
-    recent  = query("SELECT * FROM trades ORDER BY timestamp DESC LIMIT 50")
-
-    pnls    = [t["pnl"] for t in trades if t.get("pnl") is not None]
-    fees    = [t["fee"] for t in trades if t.get("fee") is not None]
-    wins    = [p for p in pnls if p > 0]
-    win_rate = len(wins) / len(pnls) if pnls else 0
-    total_fee = sum(fees)
-
-    # 残高推移
-    balance_series = []
-    running = initial
-    for t in trades:
-        running += t.get("pnl", 0)
-        ts = (t.get("timestamp") or "")[:16].replace("T", " ")
-        balance_series.append({"t": ts, "b": round(running)})
-    if not balance_series:
-        balance_series = [{"t": "開始", "b": initial}]
-
-    # ドローダウン
-    peak = initial
-    max_dd = 0.0
-    running2 = initial
-    for t in trades:
-        running2 += t.get("pnl", 0)
-        peak = max(peak, running2)
-        dd = (peak - running2) / peak if peak > 0 else 0
-        max_dd = max(max_dd, dd)
-
-    # コスト内訳（feeの符号で振り分け）
-    maker_rebate = sum(t["fee"] for t in trades if t.get("fee", 0) < 0)
-    taker_fee    = sum(t["fee"] for t in trades if t.get("fee", 0) > 0)
-    spread_cost  = total_fee - maker_rebate - taker_fee
-
-    return jsonify({
-        "updated_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "initial_balance": initial,
-        "balance":         round(running2),
-        "win_rate":        round(win_rate, 4),
-        "max_drawdown":    round(max_dd, 4),
-        "total_trades":    len(pnls),
-        "total_fee":       round(total_fee, 2),
-        "balance_series":  balance_series,
-        "trade_pnls":      [{"pnl": round(t["pnl"], 0)} for t in trades[-100:]],
-        "cost_breakdown": {
-            "maker_rebate": round(maker_rebate, 2),
-            "taker_fee":    round(taker_fee, 2),
-            "spread_cost":  round(spread_cost, 2),
-        },
-        "recent_trades": recent,
-    })
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)

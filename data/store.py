@@ -2,7 +2,10 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "trades.db")
+DB_PATH = os.environ.get(
+    "TRADES_DB",
+    os.path.join(os.path.dirname(__file__), "..", "trades.db")
+)
 
 
 def get_conn():
@@ -82,6 +85,19 @@ def save_trade(trade: dict):
             trade.get("fee", 0),
         ))
         return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def save_volatility_log(loop_num: int, ranked: list):
+    """ボラティリティスキャン結果をDBに保存"""
+    ts = datetime.now().isoformat()
+    with get_conn() as conn:
+        conn.executemany("""
+        INSERT INTO volatility_log (loop_num, timestamp, pair, score, volume_jpy, spread_pct, last_price)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [
+            (loop_num, ts, r["pair"], r["score"], r.get("vol_jpy", 0), r.get("spread_pct", 0), r.get("last", 0))
+            for r in ranked
+        ])
 
 
 def close_trade(trade_id: int, exit_price: float, pnl: float, balance: float, reason: str):

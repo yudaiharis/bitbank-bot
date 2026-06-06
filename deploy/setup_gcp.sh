@@ -175,3 +175,42 @@ BOT_DIR_ABS="$(cd "$(dirname "$0")/.." && pwd)"
 CRON_JOB="0 2 * * 0 $BOT_DIR_ABS/deploy/weekly_analysis.sh"
 (crontab -l 2>/dev/null | grep -v "weekly_analysis"; echo "$CRON_JOB") | crontab -
 echo "  週次自動分析をcronに登録しました（毎週日曜 深夜2時）"
+
+# ---------- GitHub Actions デプロイ対応 ----------
+echo ""
+echo "[追加] GitHub Actions からの自動デプロイ設定..."
+
+# bitbank-bot を sudo なしで systemctl restart できるよう sudoers に追加
+SUDOERS_LINE="$BOT_USER ALL=(ALL) NOPASSWD: /bin/systemctl restart bitbank-bot, /bin/systemctl is-active bitbank-bot, /bin/journalctl -u bitbank-bot *"
+echo "$SUDOERS_LINE" | sudo tee /etc/sudoers.d/bitbank-bot-deploy > /dev/null
+sudo chmod 440 /etc/sudoers.d/bitbank-bot-deploy
+echo "  sudoers 設定完了（bitbank-bot の restart を NOPASSWD 化）"
+
+# git が HTTPS で pull できるよう確認
+cd "$BOT_DIR_ABS"
+REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
+if [ -z "$REMOTE" ]; then
+    echo ""
+    echo "  ★ git remote が未設定です。以下を実行してください："
+    echo "    git remote add origin https://github.com/yudaiharis/bitbank-bot.git"
+fi
+
+echo ""
+echo "========================================"
+echo "  GitHub Actions デプロイ用 Secrets 設定"
+echo "========================================"
+EXTERNAL_IP=$(curl -s -m 5 "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" -H "Metadata-Flavor: Google" 2>/dev/null || echo "取得失敗")
+echo ""
+echo "  GitHub リポジトリの Settings > Secrets > Actions に追加："
+echo ""
+echo "    GCP_HOST    = $EXTERNAL_IP"
+echo "    GCP_USER    = $BOT_USER"
+echo "    GCP_BOT_DIR = $BOT_DIR_ABS"
+echo "    GCP_SSH_KEY = （以下のコマンドで生成・表示）"
+echo ""
+echo "  SSH キー生成（まだ存在しない場合）:"
+echo "    ssh-keygen -t ed25519 -C 'github-actions' -f ~/.ssh/github_actions -N ''"
+echo "    cat ~/.ssh/github_actions.pub >> ~/.ssh/authorized_keys"
+echo "    cat ~/.ssh/github_actions   # ← この内容を GCP_SSH_KEY に設定"
+echo ""
+echo "========================================"

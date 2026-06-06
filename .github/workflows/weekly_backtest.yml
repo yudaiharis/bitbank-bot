@@ -171,7 +171,70 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   # ─────────────────────────────────────────────────────────────
-  # Job 3: 閾値不合格時 → Slack 警告
+  # Job 3: GCP デプロイ（SSH で git pull + サービス再起動）
+  #   必要な GitHub Secrets:
+  #     GCP_HOST     : GCP インスタンスの外部 IP
+  #     GCP_USER     : SSH ユーザー名（例: ubuntu）
+  #     GCP_SSH_KEY  : SSH 秘密鍵（-----BEGIN OPENSSH PRIVATE KEY----- ...）
+  #     GCP_BOT_DIR  : ボットのディレクトリ（例: /home/ubuntu/bitbank-bot）
+  # ─────────────────────────────────────────────────────────────
+  deploy-gcp:
+    name: GCP デプロイ（git pull + 再起動）
+    needs: commit-config
+    # GCP_HOST が設定されている場合のみ実行（ローカル開発時はスキップ）
+    if: ${{ secrets.GCP_HOST != '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH キーのセットアップ
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCP_SSH_KEY }}" > ~/.ssh/gcp_key
+          chmod 600 ~/.ssh/gcp_key
+          ssh-keyscan -H "${{ secrets.GCP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: GCP で git pull + ボット再起動
+        run: |
+          ssh -i ~/.ssh/gcp_key \
+              -o StrictHostKeyChecking=no \
+              "${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}" \
+              "
+              set -e
+              BOT_DIR='${{ secrets.GCP_BOT_DIR }}'
+              cd \"\$BOT_DIR\"
+
+              echo '[1/3] git pull で最新 config.yaml を取得...'
+              git pull origin master
+
+              echo '[2/3] bitbank-bot サービスを再起動...'
+              sudo systemctl restart bitbank-bot
+
+              echo '[3/3] 起動確認...'
+              sleep 5
+              sudo systemctl is-active bitbank-bot && echo 'OK: bot 起動確認' \
+                || (echo 'ERROR: bot 起動失敗' && sudo journalctl -u bitbank-bot -n 20 && exit 1)
+              "
+
+      - name: SSH キーを削除（クリーンアップ）
+        if: always()
+        run: rm -f ~/.ssh/gcp_key
+
+      - name: Slack デプロイ完了通知
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          python3 -c "
+          import requests, os
+          url = os.environ.get('SLACK_WEBHOOK_URL','')
+          if not url: exit(0)
+          requests.post(url, json={
+            'text': ':rocket: *GCP デプロイ完了* - 新しい config.yaml で bitbank-bot を再起動しました'
+          }, timeout=5)
+          "
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 4: 閾値不合格時 → Slack 警告
   # ─────────────────────────────────────────────────────────────
   notify-failure:
     name: 閾値不合格通知

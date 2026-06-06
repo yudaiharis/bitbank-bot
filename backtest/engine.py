@@ -351,8 +351,14 @@ def optimize(df: pd.DataFrame, base_cfg: dict,
     # (df, cfg) のペアを引数リストに変換
     args_list = [(df, cfg, df_htf) for cfg in valid_combos]
 
-    with Pool(processes=n_procs) as pool:
-        results = pool.map(_optimize_worker, args_list)
+    # daemonプロセス内（run_all_pairs の子プロセス）からは
+    # さらに Pool を生成できないため、シングルプロセスにフォールバック
+    import multiprocessing as _mp
+    if _mp.current_process().daemon:
+        results = list(map(_optimize_worker, args_list))
+    else:
+        with Pool(processes=n_procs) as pool:
+            results = pool.map(_optimize_worker, args_list)
 
     results.sort(key=lambda x: -x["score"])
 

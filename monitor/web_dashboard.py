@@ -136,6 +136,14 @@ canvas{max-height:220px}
       </div>
     </details>
   </div>
+  <div class="panel" style="margin-bottom:20px" id="ci-panel">
+    <h2>GitHub Actions 自動改善履歴
+      <span style="font-size:11px;font-weight:400;color:#475569">毎週日曜 JST 02:00 自動実行</span>
+      <a id="ci-actions-link" href="#" target="_blank"
+         style="font-size:11px;color:#60a5fa;margin-left:10px;text-decoration:none">Actions ページ →</a>
+    </h2>
+    <div id="ci-content" style="font-size:13px;color:#64748b">読み込み中...</div>
+  </div>
   <div class="panel" style="margin-bottom:20px">
     <h2>レポートダウンロード <span style="font-size:11px;font-weight:400;color:#475569">（PCのClaude Codeで手動分析する場合）</span></h2>
     <div id="dl-reports">読み込み中...</div>
@@ -346,8 +354,92 @@ document.addEventListener('toggle', function(e) {
   }
 }, true);
 
+// ── GitHub Actions 改善履歴 ─────────────────────────────────
+async function loadCI() {
+  try {
+    const r = await fetch('/api/github_actions');
+    const d = await r.json();
+    const el = document.getElementById('ci-content');
+
+    if (d.error) {
+      el.innerHTML = `<span style="color:#475569">${d.error}</span>`;
+      return;
+    }
+
+    // Actions ページリンク
+    const link = document.getElementById('ci-actions-link');
+    if (link && d.actions_url) link.href = d.actions_url;
+
+    // ── ワークフロー実行履歴テーブル ──
+    const runRows = (d.runs || []).map(run => {
+      const pass = run.conclusion === 'success';
+      const fail = run.conclusion === 'failure';
+      const badge = pass
+        ? '<span style="background:#14532d;color:#34d399;padding:2px 8px;border-radius:4px;font-size:11px">PASS</span>'
+        : fail
+        ? '<span style="background:#7f1d1d;color:#f87171;padding:2px 8px;border-radius:4px;font-size:11px">FAIL</span>'
+        : '<span style="background:#1e2235;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px">' + (run.conclusion || '実行中') + '</span>';
+      return `<tr>
+        <td style="padding:6px 8px">${run.date_jst}</td>
+        <td style="padding:6px 8px">${badge}</td>
+        <td style="padding:6px 8px;color:#94a3b8;font-size:12px">${run.summary || '—'}</td>
+        <td style="padding:6px 8px">
+          <a href="${run.url}" target="_blank"
+             style="font-size:11px;color:#60a5fa;text-decoration:none">詳細 →</a>
+        </td>
+      </tr>`;
+    }).join('');
+
+    // ── 自動改善コミット一覧 ──
+    const commitRows = (d.auto_commits || []).map(c => {
+      const lines = c.message.split('\\n').filter(l => l.trim());
+      const title = lines[0] || '';
+      // サマリー行（対象Nペア | 平均勝率...）を探す
+      const summaryLine = lines.find(l => l.includes('ペア') && l.includes('勝率')) || '';
+      const diffLine = c.diff
+        ? `<div style="margin-top:4px;font-family:monospace;font-size:11px;color:#a78bfa">config変更: ${c.diff}</div>`
+        : '';
+      return `<div style="border-bottom:1px solid #1e2235;padding:10px 0">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="color:#34d399;font-size:12px;font-weight:600">✅ 閾値合格・パラメータ更新</span>
+              <a href="${c.url}" target="_blank"
+                 style="font-size:10px;color:#60a5fa;text-decoration:none">${c.sha}</a>
+            </div>
+            ${summaryLine ? '<div style="color:#94a3b8;font-size:11px;margin-top:3px">' + summaryLine + '</div>' : ''}
+            ${diffLine}
+          </div>
+          <div style="white-space:nowrap;font-size:11px;color:#475569">${c.date_jst}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+        <thead>
+          <tr style="border-bottom:1px solid #2d3148">
+            <th style="text-align:left;padding:5px 8px;color:#64748b">実行日時</th>
+            <th style="padding:5px 8px;color:#64748b">結果</th>
+            <th style="padding:5px 8px;color:#64748b;text-align:left">概要</th>
+            <th style="padding:5px 8px;color:#64748b"></th>
+          </tr>
+        </thead>
+        <tbody>${runRows || '<tr><td colspan="4" style="padding:12px;color:#475569">実行履歴なし</td></tr>'}</tbody>
+      </table>
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">自動改善コミット履歴</div>
+      ${commitRows || '<div style="color:#475569;font-size:13px">自動改善コミットなし</div>'}
+    `;
+  } catch(e) {
+    document.getElementById('ci-content').innerHTML =
+      '<span style="color:#475569">GitHub API 未設定（GITHUB_TOKEN / GITHUB_REPO が必要）</span>';
+  }
+}
+
 load();
+loadCI();
 setInterval(load, 30000);
+setInterval(loadCI, 300000);  // 5分ごとに更新
 </script>
 </body>
 </html>"""
@@ -356,6 +448,118 @@ setInterval(load, 30000);
 @app.route("/")
 def index():
     return HTML
+
+
+@app.route("/api/github_actions")
+def github_actions():
+    """GitHub Actions 実行履歴と自動改善コミットを返す"""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo  = os.environ.get("GITHUB_REPO", "yudaiharis/bitbank-bot")
+
+    if not token:
+        return jsonify({
+            "error": "GITHUB_TOKEN 未設定 — コンテナ起動時に -e GITHUB_TOKEN=ghp_... を追加してください",
+            "runs": [], "auto_commits": [], "actions_url": ""
+        })
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    base = f"https://api.github.com/repos/{repo}"
+    actions_url = f"https://github.com/{repo}/actions"
+
+    def jst(iso: str) -> str:
+        """ISO8601 UTC → JST 表示"""
+        try:
+            from datetime import timezone, timedelta
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            jst_dt = dt.astimezone(timezone(timedelta(hours=9)))
+            return jst_dt.strftime("%Y-%m-%d %H:%M JST")
+        except Exception:
+            return iso[:16]
+
+    # ── ワークフロー実行履歴（直近10件）──────────────────────
+    runs_data = []
+    try:
+        import requests as req
+        r = req.get(
+            f"{base}/actions/workflows/weekly_backtest.yml/runs?per_page=10",
+            headers=headers, timeout=8
+        )
+        if r.status_code == 200:
+            for run in r.json().get("workflow_runs", []):
+                # ジョブのサマリーを取得（threshold チェック出力）
+                summary = ""
+                try:
+                    jobs_r = req.get(run["jobs_url"], headers=headers, timeout=5)
+                    if jobs_r.status_code == 200:
+                        for job in jobs_r.json().get("jobs", []):
+                            if "閾値" in job.get("name", "") or "backtest" in job.get("name", "").lower():
+                                summary = job.get("conclusion", "")
+                except Exception:
+                    pass
+
+                runs_data.append({
+                    "date_jst":   jst(run.get("created_at", "")),
+                    "conclusion": run.get("conclusion", ""),
+                    "summary":    summary,
+                    "url":        run.get("html_url", ""),
+                })
+    except Exception as e:
+        runs_data = [{"date_jst": "取得エラー", "conclusion": "error",
+                      "summary": str(e), "url": ""}]
+
+    # ── 自動改善コミット（"auto-optimize" を含むもの）──────────
+    auto_commits = []
+    try:
+        r = req.get(f"{base}/commits?per_page=30", headers=headers, timeout=8)
+        if r.status_code == 200:
+            for c in r.json():
+                msg = c.get("commit", {}).get("message", "")
+                if "auto-optimize" in msg or "auto_optimize" in msg:
+                    # コミットの config.yaml 差分を取得
+                    diff_summary = ""
+                    try:
+                        detail = req.get(
+                            f"{base}/commits/{c['sha']}",
+                            headers=headers, timeout=5
+                        )
+                        if detail.status_code == 200:
+                            for f_info in detail.json().get("files", []):
+                                if f_info.get("filename") == "config.yaml":
+                                    patch = f_info.get("patch", "")
+                                    # 変更行だけ抜き出す
+                                    changes = [
+                                        ln[1:].strip()
+                                        for ln in patch.split("\n")
+                                        if ln.startswith("+") and not ln.startswith("+++")
+                                        and any(k in ln for k in
+                                            ["rsi_", "stop_loss", "take_profit", "ema_"])
+                                    ]
+                                    diff_summary = " / ".join(changes[:4])
+                    except Exception:
+                        pass
+
+                    date_str = c.get("commit", {}).get("committer", {}).get("date", "")
+                    auto_commits.append({
+                        "date_jst": jst(date_str),
+                        "message":  msg.replace("\n\n", "\\n").replace("\n", "\\n"),
+                        "sha":      c["sha"][:7],
+                        "url":      c.get("html_url", ""),
+                        "diff":     diff_summary,
+                    })
+                if len(auto_commits) >= 10:
+                    break
+    except Exception:
+        pass
+
+    return jsonify({
+        "actions_url":  actions_url,
+        "runs":         runs_data,
+        "auto_commits": auto_commits,
+    })
 
 
 @app.route("/download/report/<int:loop_num>")

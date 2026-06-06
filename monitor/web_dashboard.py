@@ -303,19 +303,27 @@ async function load() {
           🎯 <b style="color:#a78bfa">目標</b>：勝率 <b>${(s.target_win_rate*100).toFixed(0)}%以上</b> かつ 最大DD <b>${(s.target_max_drawdown*100).toFixed(0)}%以内</b> を <b>${s.target_consecutive}連続達成</b>（最大${s.trades_per_loop}件/ループ × PDCAで自動改善）
         </div>
         <ul style="list-style:none;padding:0;margin:0 0 14px 0">
-          <li>📌 <b>対象銘柄</b>：${(s.pairs||[]).join(' / ')}（計${(s.pairs||[]).length}ペア・btc/eth/doge除外済み）</li>
+          <li>📌 <b>対象銘柄</b>：${(s.pairs||[]).join(' / ')}（計${(s.pairs||[]).length}ペア・btc/eth/doge/link除外済み）</li>
           <li>🔀 <b>同時保有上限</b>：最大 <b>${s.max_simultaneous}</b> ポジション（全ペアを${s.trade_interval_sec}秒ごとに並列チェック）</li>
           <li>🕐 <b>足種</b>：<b>${s.candle_type}</b>（${s.scan_interval_min}分ごとにボラティリティ再スキャン）</li>
           <li>📐 <b>シグナル条件</b>：RSI(${s.rsi_period}) + ボリンジャーバンド（${s.bb_period}期間 ${s.bb_std}σ）逆張り戦略</li>
           <li style="margin-left:1.5em"><span style="color:#34d399">買い</span>：RSI &lt; 閾値 かつ 価格 &lt; BB下限（売られすぎ）</li>
           <li style="margin-left:1.5em"><span style="color:#f87171">売り</span>：RSI &gt; 閾値 かつ 価格 &gt; BB上限（買われすぎ）</li>
+          ${s.use_htf_filter ? `<li>📈 <b>MTFトレンドフィルター</b>（1時間足 EMA${s.htf_ema_period}）</li>
+          <li style="margin-left:1.5em">上昇トレンド → <span style="color:#34d399">買いのみ</span>許可（押し目買い）</li>
+          <li style="margin-left:1.5em">下降トレンド → <span style="color:#f87171">売りのみ</span>許可（戻り売り）</li>
+          <li style="margin-left:1.5em">横ばい（EMA傾き±${s.htf_flat_threshold}%以内）→ 両方向許可</li>` : ''}
+          <li>🛡️ <b>リスク管理</b></li>
+          <li style="margin-left:1.5em">含み損上限：残高の <b>${(s.max_unrealized_loss_pct*100).toFixed(0)}%</b> 超で新規エントリー停止</li>
+          <li style="margin-left:1.5em">連続SLクールダウン：<b>${s.max_consecutive_sl}</b>連続SLで <b>${s.sl_cooldown_minutes}</b>分停止</li>
+          <li style="margin-left:1.5em">相関フィルター：同グループ・同方向の重複禁止（${s.corr_display}）</li>
           <li>💰 <b>1ポジションあたり</b>：残高の ${(s.position_size_pct*100).toFixed(0)}%（現在 ¥${Math.round(s.order_size).toLocaleString()} 相当）</li>
           <li>💸 <b>手数料</b>：Maker ${s.maker_fee}%（受取）/ Taker +${s.taker_fee}%（支払）</li>
         </ul>
         <details id="pair-params-details" style="cursor:pointer">
           <summary style="font-size:12px;color:#60a5fa;padding:6px 0;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">
             <span class="pp-arrow" style="font-size:10px">▶</span>
-            ペア別パラメータを表示（5分足バックテスト最適化済み）
+            ペア別パラメータを表示（5分足バックテスト最適化 + MTFフィルター検証済み）
           </summary>
           <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">
             <thead>
@@ -738,24 +746,42 @@ def stats():
             "take_profit_pct":overrides.get("take_profit_pct",cfg.get("take_profit_pct",0.040)),
         })
 
+    # 相関グループを表示用文字列に変換
+    corr_groups = cfg.get("correlation_groups", [])
+    corr_display = " / ".join(
+        "+".join(g) for g in corr_groups
+    ) if corr_groups else "なし"
+
     strategy = {
-        "pairs":                   pairs,
-        "pair_params_list":        pair_params_list,
-        "max_simultaneous":        cfg.get("max_simultaneous_positions", 4),
-        "candle_type":             cfg.get("candle_type", "5min"),
-        "scan_interval_min":       cfg.get("scan_interval_sec", 900) // 60,
-        "trade_interval_sec":      cfg.get("trade_interval_sec", 300),
-        "rsi_period":              cfg.get("rsi_period", 14),
-        "bb_period":               cfg.get("bb_period", 20),
-        "bb_std":                  cfg.get("bb_std", 2.0),
-        "position_size_pct":       cfg.get("position_size_pct", 0.05),
-        "order_size":              order_size,
-        "maker_fee":               cfg.get("maker_fee", -0.0002) * 100,
-        "taker_fee":               cfg.get("taker_fee", 0.0012) * 100,
-        "trades_per_loop":         cfg.get("trades_per_loop", 50),
-        "target_win_rate":         cfg.get("target_win_rate", 0.55),
-        "target_max_drawdown":     cfg.get("target_max_drawdown", 0.10),
-        "target_consecutive":      cfg.get("target_consecutive", 3),
+        # ── 基本設定 ──────────────────────────────────────────
+        "pairs":               pairs,
+        "pair_params_list":    pair_params_list,
+        "max_simultaneous":    cfg.get("max_simultaneous_positions", 4),
+        "candle_type":         cfg.get("candle_type", "5min"),
+        "scan_interval_min":   cfg.get("scan_interval_sec", 900) // 60,
+        "trade_interval_sec":  cfg.get("trade_interval_sec", 300),
+        # ── シグナル ──────────────────────────────────────────
+        "rsi_period":          cfg.get("rsi_period", 14),
+        "bb_period":           cfg.get("bb_period", 20),
+        "bb_std":              cfg.get("bb_std", 2.0),
+        # ── MTFフィルター ─────────────────────────────────────
+        "use_htf_filter":      cfg.get("use_htf_filter", True),
+        "htf_ema_period":      cfg.get("htf_ema_period", 20),
+        "htf_flat_threshold":  cfg.get("htf_flat_threshold", 0.05),
+        # ── リスク管理 ────────────────────────────────────────
+        "position_size_pct":      cfg.get("position_size_pct", 0.05),
+        "order_size":             order_size,
+        "max_unrealized_loss_pct":cfg.get("max_unrealized_loss_pct", 0.05),
+        "max_consecutive_sl":     cfg.get("max_consecutive_sl", 3),
+        "sl_cooldown_minutes":    cfg.get("sl_cooldown_minutes", 60),
+        "corr_display":           corr_display,
+        # ── 手数料・PDCA ─────────────────────────────────────
+        "maker_fee":           cfg.get("maker_fee", -0.0002) * 100,
+        "taker_fee":           cfg.get("taker_fee", 0.0012) * 100,
+        "trades_per_loop":     cfg.get("trades_per_loop", 50),
+        "target_win_rate":     cfg.get("target_win_rate", 0.55),
+        "target_max_drawdown": cfg.get("target_max_drawdown", 0.10),
+        "target_consecutive":  cfg.get("target_consecutive", 3),
     }
 
     return jsonify({

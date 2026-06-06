@@ -103,10 +103,9 @@ def fetch_ohlcv(pair: str, candle_type: str, days: int) -> pd.DataFrame:
 # ============================================================
 
 def add_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """RSI・ボリンジャーバンド・EMAフィルターを追加"""
+    """5分足にRSI・ボリンジャーバンドを追加"""
     import ta as _ta
-    min_len = max(cfg.get("bb_period", 20), cfg.get("ema_filter_period", 50)) + 5
-    if len(df) < min_len:
+    if len(df) < cfg.get("bb_period", 20) + 5:
         return df
     df = df.copy()
     df["rsi"] = _ta.momentum.RSIIndicator(
@@ -117,32 +116,66 @@ def add_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     )
     df["bb_upper"] = bb.bollinger_hband()
     df["bb_lower"] = bb.bollinger_lband()
-    df["ema_filter"] = _ta.trend.EMAIndicator(
-        df["close"], window=cfg.get("ema_filter_period", 50)
-    ).ema_indicator()
     return df
 
 
-def get_signal(row, cfg: dict) -> str:
-    """RSI+BB + EMAトレンドフィルター でシグナルを返す"""
+def add_htf_ema(df_htf: pd.DataFrame, cfg: dict) -> pd.Series:
+    """
+    1時間足 DataFrame に EMA を計算して Series で返す。
+    バックテスト用: index は timestamp。
+    """
+    import ta as _ta
+    period = cfg.get("htf_ema_period", 20)
+    if df_htf is None or len(df_htf) < period:
+        return pd.Series(dtype=float)
+    ema = _ta.trend.EMAIndicator(df_htf["close"], window=period).ema_indicator()
+    ema.index = df_htf["timestamp"]
+    return ema
+
+
+def get_htf_trend(ts: pd.Timestamp, htf_ema: pd.Series, cfg: dict) -> str:
+    """
+    指定時刻より前の直近の 1時間足EMA から trend を返す。
+    Returns: "up" / "down" / "flat"
+    """
+    if htf_ema.empty:
+        return "flat"
+    # ts より前のEMA値を取得（look-ahead bias を防ぐため）
+    valid = htf_ema[htf_ema.index <= ts]
+    if len(valid) < 2:
+        return "flat"
+    ema_now  = valid.iloc[-1]
+    ema_prev = valid.iloc[-2]
+    if pd.isna(ema_now) or pd.isna(ema_prev) or ema_prev == 0:
+        return "flat"
+    slope_pct = (ema_now - ema_prev) / ema_prev * 100
+    flat_th   = cfg.get("htf_flat_threshold", 0.05)
+    if abs(slope_pct) < flat_th:
+        return "flat"
+    return "up" if slope_pct > 0 else "down"
+
+
+def get_signal(row, cfg: dict, htf_trend: str = "flat") -> str:
+    """
+    RSI+BB 逆張り + 1時間足トレンドフィルターでシグナルを返す。
+    htf_trend: "up" / "down" / "flat"
+    """
     if pd.isna(row.get("rsi")) or pd.isna(row.get("bb_lower")):
         return "hold"
 
-    oversold    = cfg.get("rsi_oversold",   25)
-    overbought  = cfg.get("rsi_overbought", 65)
-    use_filter  = cfg.get("use_ema_filter", True)
-    close       = row["close"]
-    ema         = row.get("ema_filter")
+    oversold   = cfg.get("rsi_oversold",   25)
+    overbought = cfg.get("rsi_overbought", 65)
+    use_htf    = cfg.get("use_htf_filter", True)
+    close      = row["close"]
+
+    buy_ok  = (not use_htf) or (htf_trend in ("up",   "flat"))
+    sell_ok = (not use_htf) or (htf_trend in ("down", "flat"))
 
     if row["rsi"] < oversold and close < row["bb_lower"]:
-        if use_filter and not pd.isna(ema) and close < ema:
-            return "hold"  # 下落トレンド中のBUY禁止
-        return "buy"
+        return "buy" if buy_ok else "hold"
 
     if row["rsi"] > overbought and close > row["bb_upper"]:
-        if use_filter and not pd.isna(ema) and close > ema:
-            return "hold"  # 上昇トレンド中のSELL禁止
-        return "sell"
+        return "sell" if sell_ok else "hold"
 
     return "hold"
 
@@ -151,9 +184,15 @@ def get_signal(row, cfg: dict) -> str:
 # 3. バックテスト実行
 # ============================================================
 
-def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000) -> dict:
-    """バックテストを実行して結果dictを返す"""
+def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000,
+                 df_htf: pd.DataFrame = None) -> dict:
+    """
+    バックテストを実行して結果dictを返す。
+    df_htf: 1時間足DataFrame（MTFフィルター用）。None なら単一足モード。
+    """
     df = add_indicators(df, cfg)
+    # 1時間足EMAを事前計算（look-ahead bias なし）
+    htf_ema = add_htf_ema(df_htf, cfg) if df_htf is not None else pd.Series(dtype=float)
     sl       = cfg.get("stop_loss_pct",    0.020)
     tp       = cfg.get("take_profit_pct",  0.040)
     pos_pct  = cfg.get("position_size_pct", 0.05)
@@ -203,7 +242,8 @@ def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000
 
         # ポジションなし → エントリー
         if not position:
-            signal = get_signal(row, cfg)
+            htf_trend = get_htf_trend(row["timestamp"], htf_ema, cfg)
+            signal = get_signal(row, cfg, htf_trend)
             if signal in ("buy", "sell"):
                 amount = balance * pos_pct
                 position = {
@@ -265,10 +305,10 @@ def run_backtest(df: pd.DataFrame, cfg: dict, initial_balance: float = 1_000_000
 def _optimize_worker(args: tuple) -> dict:
     """
     Pool.map() から呼ばれる1パターン分のバックテストワーカー。
-    args = (df, cfg_combo)
+    args = (df, cfg_combo, df_htf)
     """
-    df, cfg_combo = args
-    result = run_backtest(df, cfg_combo)
+    df, cfg_combo, df_htf = args
+    result = run_backtest(df, cfg_combo, df_htf=df_htf)
     score = (
         result["win_rate"] * max(result["sharpe_ratio"], 0)
         if result["total_trades"] >= 10
@@ -277,7 +317,8 @@ def _optimize_worker(args: tuple) -> dict:
     return {"cfg": cfg_combo, "result": result, "score": score}
 
 
-def optimize(df: pd.DataFrame, base_cfg: dict) -> dict:
+def optimize(df: pd.DataFrame, base_cfg: dict,
+             df_htf: pd.DataFrame = None) -> dict:
     """
     グリッドサーチで最適パラメータを探索。
     multiprocessing.Pool で全組み合わせを並列実行する。
@@ -308,7 +349,7 @@ def optimize(df: pd.DataFrame, base_cfg: dict) -> dict:
     print(f"  組み合わせ数: {total}パターン / プロセス数: {n_procs}")
 
     # (df, cfg) のペアを引数リストに変換
-    args_list = [(df, cfg) for cfg in valid_combos]
+    args_list = [(df, cfg, df_htf) for cfg in valid_combos]
 
     with Pool(processes=n_procs) as pool:
         results = pool.map(_optimize_worker, args_list)
@@ -509,25 +550,36 @@ def main():
     pair_overrides = cfg.get("pair_params", {}).get(args.pair, {})
     cfg = {**cfg, **pair_overrides}
 
-    # データ取得
+    # データ取得（メイン足）
     df = fetch_ohlcv(args.pair, args.candle, args.days)
     if df.empty:
         print("データが取得できませんでした")
         sys.exit(1)
 
+    # 1時間足データ取得（MTFフィルター用）
+    df_htf = None
+    if cfg.get("use_htf_filter", True) and args.candle != "1hour":
+        print(f"📥 1時間足データ取得中（MTFフィルター用）...")
+        df_htf = fetch_ohlcv(args.pair, "1hour", args.days)
+        if df_htf.empty:
+            print("  1時間足データ取得失敗 → MTFフィルター無効")
+            df_htf = None
+        else:
+            print(f"  取得完了: {len(df_htf)}件")
+
     # 現在パラメータでバックテスト
     print("\n📊 現在パラメータでバックテスト実行中...")
-    base_result = run_backtest(df, cfg)
+    base_result = run_backtest(df, cfg, df_htf=df_htf)
     print(f"  取引件数: {base_result['total_trades']}")
     print(f"  勝率:     {base_result['win_rate']*100:.1f}%")
     print(f"  総損益:   ¥{base_result['total_pnl']:+,.0f}")
     print(f"  最大DD:   {base_result['max_drawdown']*100:.1f}%")
     print(f"  シャープ: {base_result['sharpe_ratio']:.2f}")
 
-    # 最適化（並列）
+    # 最適化（並列）- df_htf を各ワーカーに渡す
     opt_data = None
     if args.optimize:
-        opt_data = optimize(df, cfg)
+        opt_data = optimize(df, cfg, df_htf=df_htf)
         if args.update and opt_data:
             update_config(opt_data["best_cfg"])
 

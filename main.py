@@ -127,8 +127,19 @@ def run_paper_loop(cfg: dict, loop_num: int) -> dict:
 
                     # 新規エントリー判定
                     elif engine.can_enter():
+                        # 5分足（シグナル用）
                         df = get_candlestick(pair, candle_type=candle_type, count=60)
-                        signal = get_signal(df, pair_cfg) if not df.empty else "hold"
+                        # 1時間足（HTFトレンドフィルター用）
+                        df_htf = None
+                        if pair_cfg.get("use_htf_filter", True):
+                            try:
+                                df_htf = get_candlestick(
+                                    pair, candle_type="1hour",
+                                    count=pair_cfg.get("htf_ema_period", 20) + 5
+                                )
+                            except Exception:
+                                df_htf = None
+                        signal = get_signal(df, pair_cfg, df_htf) if not df.empty else "hold"
                         action = engine.on_signal(signal, pair, ticker)
                         if action:
                             last_action = f"[{datetime.now().strftime('%H:%M:%S')}] {action}"

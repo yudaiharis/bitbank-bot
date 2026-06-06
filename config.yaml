@@ -63,8 +63,14 @@ strategy: rsi_bb
 candle_type: 5min
 
 # ── トレンドフィルター（連続SL防止） ────────────────────────
-use_ema_filter: true           # EMAフィルター: トレンド逆行エントリーを禁止
-ema_filter_period: 200         # フィルター用EMA期間（5min×200=約16時間、長期トレンド判定）
+# ── マルチタイムフレーム（MTF）フィルター ───────────────────
+use_htf_filter: true           # 1時間足トレンドフィルターを使用
+htf_ema_period: 20             # 1時間足EMAの期間（20本=20時間）
+htf_flat_threshold: 0.05       # EMA傾きがこの%以内なら "flat"（両方向許可）
+
+# ── フォールバック: 単一足EMAフィルター（use_htf_filter=false時） ──
+use_ema_filter: false          # HTFフィルター使用時はこちらをオフ
+ema_filter_period: 200         # 5min×200=約16時間
 
 # ── 連続SLクールダウン ────────────────────────────────────
 max_consecutive_sl: 3          # 連続SLがこの件数に達したらクールダウン

@@ -9,9 +9,8 @@ import os
 import sys
 import json
 import sqlite3
-import glob
 from datetime import datetime
-from flask import Flask, jsonify, send_file, Response
+from flask import Flask, jsonify, Response
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -143,15 +142,6 @@ canvas{max-height:220px}
          style="font-size:11px;color:#60a5fa;margin-left:10px;text-decoration:none">Actions ページ →</a>
     </h2>
     <div id="ci-content" style="font-size:13px;color:#64748b">読み込み中...</div>
-  </div>
-  <div class="panel" style="margin-bottom:20px">
-    <h2>レポートダウンロード <span style="font-size:11px;font-weight:400;color:#475569">（PCのClaude Codeで手動分析する場合）</span></h2>
-    <div id="dl-reports">読み込み中...</div>
-    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-      <a href="/download/db" style="display:inline-block;font-size:13px;padding:7px 14px;background:#1e2235;border:1px solid #2d3148;border-radius:6px;color:#60a5fa;text-decoration:none">trades.db ダウンロード</a>
-      <a href="/download/config" style="display:inline-block;font-size:13px;padding:7px 14px;background:#1e2235;border:1px solid #2d3148;border-radius:6px;color:#60a5fa;text-decoration:none">config.yaml ダウンロード</a>
-      <a id="dl-final" href="/download/final" style="display:none;font-size:13px;padding:7px 14px;background:#14532d;border:1px solid #166534;border-radius:6px;color:#34d399;text-decoration:none">最終レポート ダウンロード</a>
-    </div>
   </div>
   <div class="footer">30秒ごとに自動更新 &nbsp;|&nbsp; bitbank Public API</div>
 </div>
@@ -570,64 +560,6 @@ def github_actions():
     })
 
 
-@app.route("/download/report/<int:loop_num>")
-def download_report(loop_num):
-    """ループレポートをMarkdownでダウンロード"""
-    path = os.path.join(os.path.dirname(__file__), "..", f"reports/report_{loop_num}.md")
-    if not os.path.exists(path):
-        return Response("レポートが見つかりません", status=404)
-    return send_file(os.path.abspath(path), as_attachment=True,
-                     download_name=f"report_{loop_num}.md", mimetype="text/markdown")
-
-
-@app.route("/download/final")
-def download_final():
-    """最終レポートをダウンロード"""
-    path = os.path.join(os.path.dirname(__file__), "..", "reports/final_report.md")
-    if not os.path.exists(path):
-        return Response("最終レポートがまだ生成されていません", status=404)
-    return send_file(os.path.abspath(path), as_attachment=True,
-                     download_name="final_report.md", mimetype="text/markdown")
-
-
-@app.route("/download/db")
-def download_db():
-    """trades.db をダウンロード（Claude Codeでの分析用）"""
-    path = os.path.join(os.path.dirname(__file__), "..", "trades.db")
-    if not os.path.exists(path):
-        return Response("DBファイルが見つかりません", status=404)
-    return send_file(os.path.abspath(path), as_attachment=True,
-                     download_name="trades.db", mimetype="application/octet-stream")
-
-
-@app.route("/download/config")
-def download_config():
-    """現在のconfig.yamlをダウンロード"""
-    path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
-    if not os.path.exists(path):
-        return Response("設定ファイルが見つかりません", status=404)
-    return send_file(os.path.abspath(path), as_attachment=True,
-                     download_name="config.yaml", mimetype="text/yaml")
-
-
-@app.route("/api/reports")
-def list_reports():
-    """利用可能なレポート一覧を返す"""
-    reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
-    files = glob.glob(os.path.join(reports_dir, "report_*.md"))
-    result = []
-    for f in sorted(files):
-        name = os.path.basename(f)
-        loop = name.replace("report_", "").replace(".md", "")
-        try:
-            size = os.path.getsize(f)
-            mtime = datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M")
-            result.append({"loop": int(loop), "size": size, "updated": mtime})
-        except Exception:
-            pass
-    final = os.path.join(reports_dir, "final_report.md")
-    has_final = os.path.exists(final)
-    return jsonify({"reports": result, "has_final": has_final})
 
 
 @app.route("/api/stats")

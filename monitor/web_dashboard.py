@@ -96,8 +96,13 @@ canvas{max-height:220px}
 </header>
 <div class="container">
   <div class="panel" style="margin-bottom:20px">
-    <h2>現在のトレード戦略</h2>
-    <div id="strategy-panel" style="font-size:13px;color:#94a3b8;line-height:2">読み込み中...</div>
+    <details id="strategy-details" open>
+      <summary style="list-style:none;display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none">
+        <h2 style="margin:0">現在のトレード戦略</h2>
+        <span id="strategy-badge" style="font-size:12px;color:#60a5fa">▼ 折りたたむ</span>
+      </summary>
+      <div id="strategy-panel" style="font-size:13px;color:#94a3b8;line-height:2;margin-top:14px">読み込み中...</div>
+    </details>
   </div>
   <div class="cards" id="cards">
     <div class="card"><div class="label">仮想残高</div><div class="value blue" id="balance">-</div></div>
@@ -335,8 +340,13 @@ async function load() {
   }
 }
 
-// アコーディオン toggle（ペア別パラメータ・トレード履歴）
+// アコーディオン toggle（戦略・ペア別パラメータ・トレード履歴）
 document.addEventListener('toggle', function(e) {
+  // 現在のトレード戦略
+  if (e.target.id === 'strategy-details') {
+    var badge = document.getElementById('strategy-badge');
+    if (badge) badge.textContent = e.target.open ? '▼ 折りたたむ' : '▶ 展開する';
+  }
   // ペア別パラメータの矢印
   if (e.target.id === 'pair-params-details') {
     var arrow = e.target.querySelector('.pp-arrow');
